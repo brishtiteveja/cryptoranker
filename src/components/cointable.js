@@ -4,9 +4,8 @@ import React, { useState, useEffect } from 'react'
 import axios from 'axios'
 import Table from './table'
 
-const CoinTable = () => {
+const CoinTable = ({ data, setData }) => {
     const [coinList, setCoinList] = useState([])
-    const [data, setData] = useState([])
 
     const BASE_API_URL = "https://api.coingecko.com/api/v3/"
     const COIN_LIST_API_URL = BASE_API_URL + "coins/list"
@@ -58,7 +57,7 @@ const CoinTable = () => {
         setData(res)
         // console.log(res)
       });
-    }, [MARKET_DATA_API_URL])
+    }, [MARKET_DATA_API_URL, setData])
     
     // refresh by fetching data every 120 seconds
     setTimeout(() => {

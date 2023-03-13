@@ -2,9 +2,13 @@ import Header from './components/header'
 import CoinTable from './components/cointable'
 import CoinCanvas from './components/coincanvas'
 
+import { useState } from 'react'
+
 // var cors = require('cors')
 
 function App() {
+  const [data, setData] = useState([])
+
   return (
     <div className="flex-col justify-between m-2">
       {/* header */}
@@ -24,8 +28,8 @@ function App() {
               <p className="text-center text-3lg font-bold">
                 Rank cryptocoins
               </p>
-              <CoinCanvas />
-              <CoinTable />
+              <CoinCanvas data={data} />
+              <CoinTable data={data} setData={setData} />
           </div>
         </main>
 
