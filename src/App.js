@@ -1,23 +1,46 @@
-import logo from './logo.svg';
-import './App.css';
+import Header from './components/header'
+import CoinTable from './components/cointable'
+import CoinCanvas from './components/coincanvas'
+
+// var cors = require('cors')
 
 function App() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
+    <div className="flex-col justify-between m-2">
+      {/* header */}
+      <Header />
+      
+      {/* main content */}
+      <div className="flex">
+        {/* left side */}
+        <div className="flex">
+
+        </div>
+
+        {/* main content */}
+        <main className="flex">
+          <div className="flex-col mt-10">
+
+              <p className="text-center text-3lg font-bold">
+                Rank cryptocoins
+              </p>
+              <CoinCanvas />
+              <CoinTable />
+          </div>
+        </main>
+
+        {/* right side */}
+        <div className="flex">
+
+        </div>
+
+      </div>
+
+      {/* footer */}
+      <div className="flex">
+
+      </div>
+
     </div>
   );
 }
