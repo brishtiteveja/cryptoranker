@@ -94,7 +94,7 @@ const CoinCanvas = ({ data }) => {
                                     symbol={coin.symbol} 
                                     x={200 + (index % r) * 150 + Math.floor(Math.random(0,20) * 20)} 
                                     y={100 + Math.floor(index / r) * 100 + Math.floor(Math.random(0,20) * 20)} 
-                                    radius={50} 
+                                    radius={25} 
                                     color={getRandomColor()}/>
                                 <Text 
                                     key={"text_" + coin.id}

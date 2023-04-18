@@ -1,6 +1,7 @@
 import Header from './components/header'
 import CoinTable from './components/cointable'
-import CoinCanvas from './components/coincanvas'
+// import CoinCanvas from './components/coincanvas'
+import CoinOrbit from './components/coinorbit'
 
 import { useState } from 'react'
 
@@ -24,11 +25,11 @@ function App() {
         {/* main content */}
         <main className="flex">
           <div className="flex-col mt-10">
-
+              <CoinOrbit data={data} />
               <p className="text-center text-3lg font-bold">
                 Rank cryptocoins
               </p>
-              <CoinCanvas data={data} />
+              {/* <CoinCanvas data={data} /> */}
               <CoinTable data={data} setData={setData} />
           </div>
         </main>
