@@ -35,7 +35,7 @@ export default class SceneInit {
     this.renderer.setSize(1200, 650) //(window.innerWidth, window.innerHeight);
     document.body.appendChild(this.renderer.domElement);
 
-    //this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
 
     this.stats = Stats();
     document.body.appendChild(this.stats.dom);
