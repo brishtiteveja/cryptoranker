@@ -57,7 +57,6 @@ export default class SceneInit {
   }
 
   animate() {
-    // requestAnimationFrame(this.animate.bind(this));
     window.requestAnimationFrame(this.animate.bind(this));
     this.render();
     // this.stats.update();

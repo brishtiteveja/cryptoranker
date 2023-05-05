@@ -2,7 +2,6 @@ import * as THREE from "three";
 import { useEffect } from "react";
 import SceneInit from "../lib/SceneInit";
 import Planet from "../lib/Planet";
-// import Rotation from "../lib/Rotation";
 
 const CoinOrbit = ({ data }) => {
   useEffect(() => {
@@ -10,8 +9,6 @@ const CoinOrbit = ({ data }) => {
         let sceneManager = new SceneInit();
         sceneManager.initScene();
         sceneManager.animate();
-
-        const solarSystem = new THREE.Group();
 
         const randomColor = () => {
           const colors = [
@@ -38,34 +35,22 @@ const CoinOrbit = ({ data }) => {
 
         const planetData = generatePlanetData(10);
 
+        const solarSystem = new THREE.Group()
         const planets = planetData.map(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile]) => {
           const planet = new Planet(radius, orbitRadius, orbitSpeed, planetSize, color, textureFile)
           const planetMesh = planet.getMesh();
 
-          // const planetRotation = new Rotation(planetMesh)
-          // const planetRotationMesh = planetRotation.getMesh();
           solarSystem.add(planetMesh);
 
           return { planetMesh }
         })
+
+        sceneManager.scene.planets = planets
         
         sceneManager.scene.add(solarSystem);
-        
-
-        // NOTE: Animate solar system at 60fps.
-        // const EARTH_YEAR = 2 * Math.PI * (1 / 60) * (1 / 60);
-        // const animate = () => {
-        //     sunMesh.rotation.y += 0.001;
-        //     mercurySystem.rotation.y += EARTH_YEAR * 1.2;
-        //     venusSystem.rotation.y += EARTH_YEAR * 1.5;
-        //     earthSystem.rotation.y += EARTH_YEAR;
-        //     marsSystem.rotation.y += EARTH_YEAR * 0.5;
-        //     jupiterSystem.rotation.y += EARTH_YEAR * 0.25;
-        //     requestAnimationFrame(animate);
-        // };
-        // animate();
     }
-        sceneMange();
+    
+    sceneMange();
   }, []);
 
   return (
