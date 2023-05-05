@@ -30,7 +30,7 @@ function App() {
                 Rank cryptocoins
               </p>
               {/* <CoinCanvas data={data} /> */}
-              <CoinTable data={data} setData={setData} />
+              {/* <CoinTable data={data} setData={setData} /> */}
           </div>
         </main>
 

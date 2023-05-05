@@ -6,20 +6,13 @@ import Rotation from "../lib/Rotation";
 
 const CoinOrbit = ({ data }) => {
   useEffect(() => {
-    let gui;
-    const initGui = async () => {
-        const dat = await import("dat.gui");
-        gui = new dat.GUI();
-    };
     async function sceneMange() {
-        let test = new SceneInit();
-        test.initScene();
-        test.animate();
+        let sceneManager = new SceneInit();
+        sceneManager.initScene();
+        sceneManager.animate();
 
         const solarSystem = new THREE.Group();
-        await initGui();
-        const solarSystemGui = gui.addFolder("solar system");
-        for(let i = 0; i < 100; i++) {
+        for(let i = 0; i < 10; i++) {
             const planet = new Planet(1, i * 2.3, "bitcoin.jpg")
             const planetMesh = planet.getMesh();
 
@@ -27,9 +20,8 @@ const CoinOrbit = ({ data }) => {
 
             const planetRotation = new Rotation(planetMesh)
             const planetRotationMesh = planetRotation.getMesh();
-            solarSystemGui.add(planetRotationMesh, "visible").name("mercury").listen();
         }
-        test.scene.add(solarSystem);
+        sceneManager.scene.add(solarSystem);
         
 
         // NOTE: Animate solar system at 60fps.
