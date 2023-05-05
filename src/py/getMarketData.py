@@ -2,6 +2,7 @@ import requests
 import pprint as pp
 from datetime import date, timedelta
 import pandas as pd
+import os
 import time
 import pickle
 from datetime import datetime
@@ -19,6 +20,7 @@ todays_market_data = []
 max_page = 10
 
 SLEEP_TIMER=100
+MIN_COUNT_TO_SLEEP=4
 
 def get_api_response(url):
     global global_query_count
@@ -50,10 +52,18 @@ def get_all_coin_ids():
 def get_market_data():
     global global_query_count
     for page_id in range(1, max_page):
-        add = "?vs_currency=usd&order=market_cap_desc&per_page=100&page=" + str(page_id) + "&sparkline=false"
+        #add = "?vs_currency=usd&order=market_cap_desc&per_page=100&page=" + str(page_id) + "&sparkline=false"
+        add = "?vs_currency=usd&order=market_cap_desc&page=" + str(page_id)
 
         url = MARKET_DATA_API_URL + add
+
+        if global_query_count >= MIN_COUNT_TO_SLEEP:
+            print("sleeping for a minute before next data fetch...")
+            global_query_count = 0
+            time.sleep(SLEEP_TIMER)
+
         print("Getting market data for page: " + str(page_id) + " \n Request url : " + url)
+
         resp = get_api_response(url)
 
         if resp is None:
@@ -61,10 +71,7 @@ def get_market_data():
         else:
             todays_market_data.extend(resp)
 
-        if global_query_count > 20 or resp == None:
-            print("sleeping for a minute before next data fetch...")
-            global_query_count = 0
-            time.sleep(SLEEP_TIMER)
+        
 
 def get_coin_ids_in_rank():
     global coin_ids_in_rank
@@ -104,7 +111,7 @@ def get_hist_market_data(coin_ids):
             res = get_historical_daily_coin_data(coin_id, days)
 
 
-        if global_query_count >= 15 or res == None:
+        if global_query_count >= MIN_COUNT_TO_SLEEP:
             print("sleeping for a minute before next data fetch...")
             global_query_count = 0
             time.sleep(SLEEP_TIMER)
@@ -115,6 +122,8 @@ def get_hist_market_data(coin_ids):
             i += 1
 
             # now dump the current state of the data
+            if not os.path.isdir('./data'):
+                os.mkdir('./data')
             fname = './data/crypto_market_data_' +  'for_' + str(i) + '_coins_' + str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
             with open(fname, 'wb') as f:
                 pickle.dump(hist_market_data, f)
@@ -141,14 +150,14 @@ def main():
     global hist_market_data
     get_market_data()
 
-    # get coin ids in rank
+    # # get coin ids in rank
     get_coin_ids_in_rank()
 
-    # now get historical market_cap for all ranked coins for several years
+    # # now get historical market_cap for all ranked coins for several years
     sel_coin = coin_ids_in_rank
     get_hist_market_data(sel_coin)
 
-    print("hello")
+    # print("hello")
 
     fname = 'crypto_market_data_' +  str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
     with open(fname, 'wb') as f:
@@ -157,9 +166,6 @@ def main():
     # now produce a csv file with all the data
 
     # generate the chart
-
-
-
 
 if __name__ == "__main__":
     # coin_ids = ["tezos", "bitcoin", "ethereum"]
