@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { useEffect } from "react";
 import SceneInit from "../lib/SceneInit";
 import Planet from "../lib/Planet";
-import Rotation from "../lib/Rotation";
+// import Rotation from "../lib/Rotation";
 
 const CoinOrbit = ({ data }) => {
   useEffect(() => {
@@ -12,15 +12,43 @@ const CoinOrbit = ({ data }) => {
         sceneManager.animate();
 
         const solarSystem = new THREE.Group();
-        for(let i = 0; i < 10; i++) {
-            const planet = new Planet(1, i * 2.3, "bitcoin.jpg")
-            const planetMesh = planet.getMesh();
 
-            solarSystem.add(planetMesh);
+        const randomColor = () => {
+          const colors = [
+            'red', 'blue', 'green', 'yellow', 'purple', 'orange', 'cyan', 'magenta', 'lime', 'pink'
+          ];
+          return colors[Math.floor(Math.random() * colors.length)];
+        };
 
-            const planetRotation = new Rotation(planetMesh)
-            const planetRotationMesh = planetRotation.getMesh();
-        }
+        const generatePlanetData = (count) => {
+          const data = [];
+          for (let i = 0; i < count; i++) {
+            const radius = 1;
+            const orbitRadius = 10 + i * 5;
+            const orbitSpeed = Math.random() * 0.005;
+            const planetSize = 0.2 + Math.random() * 0.8;
+            const color = randomColor();
+            const textureFile = "bitcoin.jpg"
+
+            data.push([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile]);
+          }
+
+          return data;
+        };
+
+        const planetData = generatePlanetData(10);
+
+        const planets = planetData.map(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile]) => {
+          const planet = new Planet(radius, orbitRadius, orbitSpeed, planetSize, color, textureFile)
+          const planetMesh = planet.getMesh();
+
+          // const planetRotation = new Rotation(planetMesh)
+          // const planetRotationMesh = planetRotation.getMesh();
+          solarSystem.add(planetMesh);
+
+          return { planetMesh }
+        })
+        
         sceneManager.scene.add(solarSystem);
         
 
