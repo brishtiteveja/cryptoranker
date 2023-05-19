@@ -32,15 +32,17 @@ const CoinOrbit = ({ data }) => {
         return data;
       };
 
-      const planetData = generatePlanetData(10);
+      const planetData = generatePlanetData(25);
 
       // const solarSystem = new THREE.Group()
+      let i = 0;
       planetData.forEach(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile]) => {
         const planet = new Planet(radius, orbitRadius, orbitSpeed, planetSize, color, textureFile)
         const planetMesh = planet.getMesh();
 
         sceneManager.scene.add(planetMesh);
-        planet.drawOrbit(sceneManager.scene, randomColor());
+        planet.drawOrbit(sceneManager.scene, randomColor(), i + 1);
+        i += 1;;
         sceneManager.planets.push(planet);
       });
     }

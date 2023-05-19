@@ -1,5 +1,5 @@
 import Header from './components/header'
-import CoinTable from './components/cointable'
+// import CoinTable from './components/cointable'
 // import CoinCanvas from './components/coincanvas'
 import CoinOrbit from './components/coinorbit'
 
