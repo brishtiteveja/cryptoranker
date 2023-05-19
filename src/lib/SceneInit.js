@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls";
-// import Stats from "three/examples/jsm/libs/stats.module";
 
 export default class SceneInit {
   constructor(fov = 36, camera, scene, stats, controls, renderer) {
@@ -10,6 +9,7 @@ export default class SceneInit {
     this.camera = camera;
     this.controls = controls;
     this.renderer = renderer;
+    this.planets = [];
   }
 
   initScene() {
@@ -23,9 +23,6 @@ export default class SceneInit {
 
     this.scene = new THREE.Scene();
 
-    // const spaceTexture = new THREE.TextureLoader().load("space2.jpeg");
-    // this.scene.background = spaceTexture;
-
     // specify a canvas which is already created in the HTML file and tagged by an id
     // aliasing enabled
     this.renderer = new THREE.WebGLRenderer({
@@ -38,38 +35,23 @@ export default class SceneInit {
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
 
-    // this.stats = Stats();
-    // document.body.appendChild(this.stats.dom);
-
     // ambient light which is for the whole scene
-    // let ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
-    // ambientLight.castShadow = false;
-    // this.scene.add(ambientLight);
+    let ambientLight = new THREE.AmbientLight(0xffffff, 0.2);
+    this.scene.add(ambientLight);
 
-    // spot light which is illuminating the chart directly
-    // let spotLight = new THREE.SpotLight(0xffffff, 0.55);
-    // spotLight.castShadow = true;
-    // spotLight.position.set(0, 40, 10);
-    // this.scene.add(spotLight);
-
-    // if window resizes
-    window.addEventListener("resize", () => this.onWindowResize(), false);
+    // point light which is for the sun
+    let pointLight = new THREE.PointLight(0xffffff, 1);
+    pointLight.position.set(0, 0, 0);
+    this.scene.add(pointLight);
   }
 
   animate() {
-    window.requestAnimationFrame(this.animate.bind(this));
-    this.render();
-    // this.stats.update();
+    requestAnimationFrame(this.animate.bind(this));
+    this.planets.forEach((planet) => {
+      planet.rotate();
+    });
+
     this.controls.update();
-  }
-
-  render() {
     this.renderer.render(this.scene, this.camera);
-  }
-
-  onWindowResize() {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 }
