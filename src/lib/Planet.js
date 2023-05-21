@@ -25,8 +25,8 @@ export default class Planet {
       this.mesh = new THREE.Mesh(geometry, material);
 
       this.mesh.position.set(
-        this.orbitRadius * Math.cos(this.orbitAngle),
-        this.orbitRadius * Math.sin(this.orbitAngle),
+        this.orbitRadius * Math.cos(this.orbitAngle) + 1000,
+        this.orbitRadius * Math.sin(this.orbitAngle) + 1000,
         0
       );
 

@@ -22,10 +22,11 @@ const CoinOrbit = ({ data }) => {
       const generatePlanetData = (count) => {
         const data = [];
         for (let i = 0; i < count; i++) {
-          const radius = 1;
+          
           const orbitRadius = 10 + i * 5;
-          const orbitSpeed = Math.random() * 0.0005;
-          const planetSize = 0.2 + Math.random() * 0.8;
+          const orbitSpeed = Math.random() * 0.002;
+          const planetSize = 0.5 + Math.random() * 5;
+          const radius = planetSize;
           const color = randomColor();
           const textureFile = "bitcoin.jpg";
           const planetInfo = {
@@ -41,7 +42,8 @@ const CoinOrbit = ({ data }) => {
         return data;
       };
 
-      const planetData = generatePlanetData(25);
+      const planetData = generatePlanetData(100);
+
 
       const planets = planetData.map(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo], index) => {
         const planet = new Planet(radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo);
