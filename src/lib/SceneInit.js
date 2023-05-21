@@ -29,10 +29,12 @@ export default class SceneInit {
     this.camera = new THREE.PerspectiveCamera(
       this.fov,
       window.innerWidth / window.innerHeight,
-      1,
+      0.1,
       1000
     );
-    this.camera.position.z = 128;
+    this.camera.position.x = 50;
+    this.camera.position.y = -150;
+    this.camera.position.z = 100;
 
     this.scene = new THREE.Scene();
 
@@ -42,9 +44,17 @@ export default class SceneInit {
     });
 
     // this.setSize(); // Call the setSize method to set the initial size
-    this.renderer.setSize(1200, 650);
+    var width = window.innerWidth * 3.5/4
+    var height = window.innerHeight * 3/4
+    this.renderer.setSize(width, height);
 
-    document.body.appendChild(this.renderer.domElement);
+    // document.body.appendChild(this.renderer.domElement);
+
+    var container = document.getElementById('canvasParent');
+    // var w = container.offsetWidth;
+    // var h = container.offsetHeight;
+    // this.renderer.setSize(w, h);
+    container.appendChild(this.renderer.domElement);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
 

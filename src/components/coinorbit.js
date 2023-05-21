@@ -85,7 +85,7 @@ const CoinOrbit = ({ data }) => {
   }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center">
+    <div id="canvasParent" className="flex flex-col items-center justify-center">
       <canvas id="myThreeJsCanvas" className="ml-20" ref={sceneRef} />
     </div>
   );
