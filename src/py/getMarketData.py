@@ -17,7 +17,7 @@ global_query_count = 0
 hist_market_data = {}
 
 todays_market_data = []
-max_page = 10
+max_page = 98
 
 SLEEP_TIMER=100
 MIN_COUNT_TO_SLEEP=4
@@ -25,20 +25,26 @@ MIN_COUNT_TO_SLEEP=4
 def get_api_response(url):
     global global_query_count
 
-    r = requests.get(url, auth=('user', 'pass'))
-    global_query_count += 1
-    if r.status_code == 200:
-        res = r.json()
-        #pp.pprint(r.json())
-    else:
-        print("Error: " + str(r.status_code) + " " + r.text)
-        return None
+    try:
+        r = requests.get(url, auth=('user', 'pass'))
+        global_query_count += 1
+        if r.status_code == 200:
+            res = r.json()
+            #pp.pprint(r.json())
+        else:
+            print("Error: " + str(r.status_code) + " " + r.text)
 
-    return res
+        return res
+    except Exception as e:
+        print("Exception occurred in api response: ", str(e)) 
+        return e
 
 def get_all_coin_ids():
     url = COIN_LIST_API_URL
-    resp = get_api_response(url)
+    try:
+        resp = get_api_response(url)
+    except:
+        pass
 
     if resp is None:
         return None
@@ -51,6 +57,8 @@ def get_all_coin_ids():
 
 def get_market_data():
     global global_query_count
+
+    exception_count = 0
     for page_id in range(1, max_page):
         #add = "?vs_currency=usd&order=market_cap_desc&per_page=100&page=" + str(page_id) + "&sparkline=false"
         add = "?vs_currency=usd&order=market_cap_desc&page=" + str(page_id)
@@ -64,26 +72,36 @@ def get_market_data():
 
         print("Getting market data for page: " + str(page_id) + " \n Request url : " + url)
 
-        resp = get_api_response(url)
+        try:
+           resp = get_api_response(url)
 
-        if resp is None:
-            return None
-        else:
-            todays_market_data.extend(resp)
-
-        
+           if resp is None:
+               pass
+           else:
+               todays_market_data.extend(resp)
+        except Exception as e:
+           print(e)
+           exception_count += 1
+           if exception_count < 20:
+               # try same page
+               page_id = page_id - 1
+           else:
+               exception_count = 0 
+           pass
 
 def get_coin_ids_in_rank():
     global coin_ids_in_rank
     coin_ids_in_rank = [todays_market_data[i]["id"] for i in range(0, len(todays_market_data))]
     print("")
 
-def get_historical_daily_coin_data(coin_id, days, interval="daily"):
+def get_historical_daily_coin_data(i, coin_id, days, interval="daily"):
     global global_query_count
     url = BASE_API_URL + "/coins/" + str(coin_id) + "/market_chart"
     currency = "usd"
     add_queries = "?vs_currency=" + currency + "&days=" + str(days) + "&interval=" + str(interval) 
     url += add_queries
+
+    print("Getting coin #" + str(i))
 
     r = requests.get(url, auth=('user', 'pass'))
     global_query_count += 1
@@ -108,7 +126,7 @@ def get_hist_market_data(coin_ids):
         coin_id = coin_ids[i]
         print("Getting historical market cap data for coin id = " + coin_id)
         if coin_id not in hist_market_data:
-            res = get_historical_daily_coin_data(coin_id, days)
+            res = get_historical_daily_coin_data(i, coin_id, days)
 
 
         if global_query_count >= MIN_COUNT_TO_SLEEP:
@@ -124,7 +142,7 @@ def get_hist_market_data(coin_ids):
             # now dump the current state of the data
             if not os.path.isdir('./data'):
                 os.mkdir('./data')
-            fname = './data/crypto_market_data_' +  'for_' + str(i) + '_coins_' + str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
+            fname = './data/crypto_market_data_' +    'for_' + str(i) + '_coins_' + str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
             with open(fname, 'wb') as f:
                 pickle.dump(hist_market_data, f)
 
@@ -132,7 +150,7 @@ def get_hist_market_data(coin_ids):
 
 # weekly date manipulation
 def allsundays(year):
-   d = date(year, 1, 1)                    # January 1st
+   d = date(year, 1, 1)                       # January 1st
    d += timedelta(days = 6 - d.weekday())  # First Sunday
    while d.year == year:
       yield d
