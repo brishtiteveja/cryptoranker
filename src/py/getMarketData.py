@@ -103,15 +103,20 @@ def get_historical_daily_coin_data(i, coin_id, days, interval="daily"):
 
     print("Getting coin #" + str(i))
 
-    r = requests.get(url, auth=('user', 'pass'))
-    global_query_count += 1
-    if r.status_code == 200:
-        res = r.json()
-        return res
-        #pp.pprint(r.json())
-    else:
-        print("Error: " + str(r.status_code) + " " + r.text)
-        return None
+    try:
+        r = requests.get(url, auth=('user', 'pass'))
+        global_query_count += 1
+        if r.status_code == 200:
+            res = r.json()
+            return res
+            #pp.pprint(r.json())
+        else:
+            print("Error: " + str(r.status_code) + " " + r.text)
+            return None
+    except Exception as e:
+        print("Exception occurred : " + str(e))
+        return e
+        
 
 def get_hist_market_data(coin_ids):
     global global_query_count
@@ -122,12 +127,20 @@ def get_hist_market_data(coin_ids):
     n = len(coin_ids)
     i = 0
 
+    exception_count = 0
     while True:
         coin_id = coin_ids[i]
         print("Getting historical market cap data for coin id = " + coin_id)
         if coin_id not in hist_market_data:
-            res = get_historical_daily_coin_data(i, coin_id, days)
-
+            try:
+                res = get_historical_daily_coin_data(i, coin_id, days)
+            except Exception as e:
+                exception_count += 1
+                if exception_count < 20:
+                    continue
+                else:
+                    i += 1    
+                    continue
 
         if global_query_count >= MIN_COUNT_TO_SLEEP:
             print("sleeping for a minute before next data fetch...")
