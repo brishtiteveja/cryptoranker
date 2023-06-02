@@ -18,21 +18,27 @@ export default class Planet {
     this.textMesh = null;
   }
 
-  getMesh() {
+  getMesh(scene) {
     if (this.mesh === null) {
       const geometry = new THREE.SphereGeometry(this.radius);
-      const material = new THREE.MeshBasicMaterial({ color: this.color });
+      // const material = new THREE.MeshPhongMaterial({
+      //               map: new THREE.TextureLoader().load(this.textureFile),
+      // });
+      const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
       this.mesh = new THREE.Mesh(geometry, material);
-
+  
       this.mesh.position.set(
         this.orbitRadius * Math.cos(this.orbitAngle) + 1000,
         this.orbitRadius * Math.sin(this.orbitAngle) + 1000,
         0
       );
-
+  
       this.mesh.onClick = this.displayPlanetInfo.bind(this);
+  
+      // Display the name of the planet (the cryptocurrency)
+      this.displayCryptoName(scene, this.planetInfo.name);
     }
-
+  
     return this.mesh;
   }
 
@@ -125,6 +131,25 @@ export default class Planet {
       modal.remove();
     });
   }
+
+  displayCryptoName(scene, name) {
+    const loader = new FontLoader();
+    loader.load('fonts/helvetiker_regular.typeface.json', (font) => {
+      const textGeo = new TextGeometry(name, {
+        font: font,
+        size: 3,  // adjust the size as needed
+        height: 0,
+      });
   
+      const textMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
+      const textMesh = new THREE.Mesh(textGeo, textMaterial);
+  
+      // Position the text on the planet
+      textMesh.position.copy(this.mesh.position);
+      textMesh.position.y += 1.5 * this.radius;  // offset the text above the planet
+  
+      scene.add(textMesh);
+    });
+  }
    
 }

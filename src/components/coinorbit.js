@@ -5,6 +5,7 @@ import Planet from "../lib/Planet";
 
 const CoinOrbit = ({ data }) => {
   const sceneRef = useRef(null);
+  console.log(data)
 
   useEffect(() => {
     async function sceneManage() {
@@ -28,7 +29,7 @@ const CoinOrbit = ({ data }) => {
           const planetSize = 0.5 + Math.random() * 5;
           const radius = planetSize;
           const color = randomColor();
-          const textureFile = "bitcoin.jpg";
+          const textureFile = "bitcoin_icon.jpg";
           const planetInfo = {
             name: `Planet ${i + 1}`,
             mass: `${Math.random() * 1000} kg`,
@@ -42,12 +43,12 @@ const CoinOrbit = ({ data }) => {
         return data;
       };
 
-      const planetData = generatePlanetData(100);
+      const planetData = generatePlanetData(25);
 
 
       const planets = planetData.map(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo], index) => {
         const planet = new Planet(radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo);
-        const planetMesh = planet.getMesh();
+        const planetMesh = planet.getMesh(sceneManager.scene);
 
         planetMesh.name = `planet-${index}`;
 
