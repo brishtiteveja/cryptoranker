@@ -3,12 +3,11 @@ import { useEffect, useRef } from "react";
 import SceneInit from "../lib/SceneInit";
 import Planet from "../lib/Planet";
 
-const CoinOrbit = ({ data }) => {
+const CoinOrbit = ({ marketData }) => {
   const sceneRef = useRef(null);
 
   useEffect(() => {
     async function sceneManage(marketData) {
-      console.log(marketData)
       let sceneManager = new SceneInit();
       sceneManager.initScene();
       sceneManager.animate();
@@ -21,7 +20,7 @@ const CoinOrbit = ({ data }) => {
       };
 
       const generatePlanetData = (count) => {
-        const data = [];
+        const planetData = [];
         for (let i = 0; i < count; i++) {
           
           const orbitRadius = 10 + i * 5;
@@ -33,6 +32,7 @@ const CoinOrbit = ({ data }) => {
 
           let planetInfo = {}
 
+          console.log(marketData)
           if (marketData[i] !== undefined && marketData[i].hasOwnProperty('id')) {
             // do something with data[i]
             planetInfo = {
@@ -51,10 +51,10 @@ const CoinOrbit = ({ data }) => {
 
           }
 
-          data.push([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo]);
+          planetData.push([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo]);
         }
 
-        return data;
+        return planetData;
       };
 
       const planetData = generatePlanetData(25);
@@ -98,8 +98,8 @@ const CoinOrbit = ({ data }) => {
       sceneManager.renderer.domElement.addEventListener("click", handlePlanetClick);
     }
 
-    sceneManage(data);
-  }, [data]);
+    sceneManage(marketData);
+  }, [marketData]);
 
   return (
     <div id="canvasParent" className="flex flex-col items-center justify-center">

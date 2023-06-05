@@ -67,7 +67,7 @@ export default class Planet {
       );
     }
     orbitGeometry.setFromPoints(points);
-    const orbitMaterial = new THREE.LineBasicMaterial({ color: new THREE.Color(color) });
+    const orbitMaterial = new THREE.LineBasicMaterial({ color: this.color });
     this.orbitLine = new THREE.LineLoop(orbitGeometry, orbitMaterial);
     scene.add(this.orbitLine);
 
@@ -143,7 +143,7 @@ export default class Planet {
         height: 0,
       });
   
-      const textMaterial = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
+      const textMaterial = new THREE.MeshBasicMaterial({ color: this.color });
       const textMesh = new THREE.Mesh(textGeo, textMaterial);
   
       // Position the text on the planet

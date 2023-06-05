@@ -120,7 +120,6 @@ const CoinTable = ({ data, setData }) => {
           return item
         })
         setData(res)
-        console.log(res)
       });
     }, [MARKET_PRICE_DATA_API_URL, setData])
     

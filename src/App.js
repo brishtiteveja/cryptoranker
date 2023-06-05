@@ -25,7 +25,7 @@ function App() {
         {/* main content */}
         <main className="flex">
           <div className="flex-col mt-10">
-              <CoinOrbit data={data} />
+              <CoinOrbit marketData={data} />
               <p className="text-center text-3lg font-bold">
                 Rank cryptocoins
               </p>
