@@ -23,8 +23,8 @@ export default class Planet {
       const geometry = new THREE.SphereGeometry(this.radius);
       const material = new THREE.MeshPhongMaterial({
                     map: new THREE.TextureLoader().load(this.textureFile),
-                    transparent: true,
-                    opacity: 0.8,
+                    transparent: false,
+                    // opacity: 1,
       });
       // const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
       this.mesh = new THREE.Mesh(geometry, material);
@@ -148,7 +148,7 @@ export default class Planet {
   
       // Position the text on the planet
       textMesh.position.copy(this.mesh.position);
-      textMesh.position.y += 1.5 * this.radius;  // offset the text above the planet
+      textMesh.position.y += 0.25 * this.radius;  // offset the text above the planet
   
       scene.add(textMesh);
     });

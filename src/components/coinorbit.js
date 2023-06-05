@@ -19,24 +19,43 @@ const CoinOrbit = ({ marketData }) => {
         return colors[Math.floor(Math.random() * colors.length)];
       };
 
+      let maxMarketCap = Math.max(...marketData.map(item => item.market_cap));
+
+      // Find minimum market_cap
+      let minMarketCap = Math.min(...marketData.map(item => item.market_cap));
+
+      // Find maximum total_volume
+      let maxTotalVolume = Math.max(...marketData.map(item => item.total_volume));
+
+      // Find minimum total_volume
+      let minTotalVolume = Math.min(...marketData.map(item => item.total_volume));
+
       const generatePlanetData = (count) => {
         const planetData = [];
         for (let i = 0; i < count; i++) {
           
           const orbitRadius = 10 + i * 5;
           const orbitSpeed = Math.random() * 0.002;
-          const planetSize = 0.5 + Math.random() * 5;
+          const curMarketCap = marketData[i].market_cap
+          let planetSize = 10;
+          if (maxMarketCap !== minMarketCap)
+            planetSize = Math.abs((curMarketCap - minMarketCap) / (maxMarketCap - minMarketCap)) * 10 + 1;
+
           const radius = planetSize;
           const color = randomColor();
-          const textureFile = "cardano.jpg";
+
+          let textureFile = "cardano.jpg";
 
           let planetInfo = {}
 
-          console.log(marketData)
           if (marketData[i] !== undefined && marketData[i].hasOwnProperty('id')) {
+            let crypto_symbol = marketData[i].symbol;
+            textureFile = 'crypto_icons/' + crypto_symbol.toUpperCase() + '.png';
+            console.log(textureFile)
+
             // do something with data[i]
             planetInfo = {
-              name: marketData[i].id,
+              name: crypto_symbol,
               mass: `${Math.random() * 1000} kg`,
               distance: `${orbitRadius} AU`,
               orbitalPeriod: `${Math.random() * 100} years`
@@ -57,7 +76,7 @@ const CoinOrbit = ({ marketData }) => {
         return planetData;
       };
 
-      const planetData = generatePlanetData(25);
+      const planetData = generatePlanetData(100);
 
 
       const planets = planetData.map(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo], index) => {
