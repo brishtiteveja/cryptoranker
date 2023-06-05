@@ -29,7 +29,7 @@ const CoinOrbit = ({ data }) => {
           const planetSize = 0.5 + Math.random() * 5;
           const radius = planetSize;
           const color = randomColor();
-          const textureFile = "bitcoin_icon.jpg";
+          const textureFile = "cardano.jpg";
           const planetInfo = {
             name: `Planet ${i + 1}`,
             mass: `${Math.random() * 1000} kg`,

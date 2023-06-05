@@ -9,7 +9,24 @@ const CoinTable = ({ data, setData }) => {
 
     const BASE_API_URL = "https://api.coingecko.com/api/v3/"
     const COIN_LIST_API_URL = BASE_API_URL + "coins/list"
-    const MARKET_DATA_API_URL = BASE_API_URL + "coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250"
+    // const MARKET_DATA_API_URL = BASE_API_URL + "coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250"
+
+    const vs_currency = "usd"
+    const order = "market_cap_desc"
+    const per_page = 100
+    const page_id = 1
+    const sparkline = false
+    const price_change_percentage = '1h,24h,7d,30d,1y'
+    const locale = 'en'
+    const MARKET_PRICE_DATA_API_URL = BASE_API_URL
+            + '/coins/markets' + '?'
+            + 'vs_currency=' + vs_currency + '&'
+            + 'order=' + order + '&'
+            + 'per_page=' + per_page + '&'
+            + 'page=' + page_id + '&'
+            + 'sparkline=' + sparkline + '&'
+            + 'price_change_percentage=' + price_change_percentage + '&'
+            + 'locale=' + locale
 
     const toCurrency = (numberString) => {
       let number = parseFloat(numberString);
@@ -42,13 +59,61 @@ const CoinTable = ({ data, setData }) => {
             },
             Cell: props => toCurrency(props.value)
           },
+          {
+            Header: "24h volume",
+            accessor: "total_volume",
+            style: {
+              textAlign: 'center'
+            },
+            Cell: props => toCurrency(props.value)
+          },
+          {
+            Header: "1h",
+            accessor: "price_change_percentage_1h_in_currency",
+            style: {
+              textAlign: 'center'
+            },
+            Cell: props => toCurrency(props.value)
+          },
+          {
+            Header: "24h",
+            accessor: "price_change_percentage_24h_in_currency",
+            style: {
+              textAlign: 'center'
+            },
+            Cell: props => toCurrency(props.value)
+          },
+          {
+            Header: "1W",
+            accessor: "price_change_percentage_7d_in_currency",
+            style: {
+              textAlign: 'center'
+            },
+            Cell: props => toCurrency(props.value)
+          },
+          {
+            Header: "1M",
+            accessor: "price_change_percentage_30d_in_currency",
+            style: {
+              textAlign: 'center'
+            },
+            Cell: props => toCurrency(props.value)
+          },
+          {
+            Header: "1Y",
+            accessor: "price_change_percentage_1y_in_currency",
+            style: {
+              textAlign: 'center'
+            },
+            Cell: props => toCurrency(props.value)
+          },
         ],
         []
       );
 
     // fetch data
     useEffect( () => {
-      axios.get(MARKET_DATA_API_URL).then(function (response) {
+      axios.get(MARKET_PRICE_DATA_API_URL).then(function (response) {
         let res = response.data
         res = res.map((item, index) => {
           item["rank"] = index + 1
@@ -57,7 +122,7 @@ const CoinTable = ({ data, setData }) => {
         setData(res)
         console.log(res)
       });
-    }, [MARKET_DATA_API_URL, setData])
+    }, [MARKET_PRICE_DATA_API_URL, setData])
     
     // refresh by fetching data every 120 seconds
     setTimeout(() => {
@@ -70,7 +135,7 @@ const CoinTable = ({ data, setData }) => {
         }
 
         // get market data
-        axios.get(MARKET_DATA_API_URL).then(function (response) {
+        axios.get(MARKET_PRICE_DATA_API_URL).then(function (response) {
             let res = response.data
             res = res.map((item, index) => {
               item["rank"] = index + 1
@@ -79,7 +144,7 @@ const CoinTable = ({ data, setData }) => {
             setData(res)
             //console.log(res)
         });
-    }, 60000);
+    }, 90000);
 
     // Render the UI for your table
   return (

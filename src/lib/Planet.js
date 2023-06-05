@@ -21,10 +21,12 @@ export default class Planet {
   getMesh(scene) {
     if (this.mesh === null) {
       const geometry = new THREE.SphereGeometry(this.radius);
-      // const material = new THREE.MeshPhongMaterial({
-      //               map: new THREE.TextureLoader().load(this.textureFile),
-      // });
-      const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
+      const material = new THREE.MeshPhongMaterial({
+                    map: new THREE.TextureLoader().load(this.textureFile),
+                    transparent: true,
+                    opacity: 0.8,
+      });
+      // const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
       this.mesh = new THREE.Mesh(geometry, material);
   
       this.mesh.position.set(
