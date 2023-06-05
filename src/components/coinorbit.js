@@ -5,10 +5,10 @@ import Planet from "../lib/Planet";
 
 const CoinOrbit = ({ data }) => {
   const sceneRef = useRef(null);
-  console.log(data)
 
   useEffect(() => {
-    async function sceneManage() {
+    async function sceneManage(marketData) {
+      console.log(marketData)
       let sceneManager = new SceneInit();
       sceneManager.initScene();
       sceneManager.animate();
@@ -30,12 +30,26 @@ const CoinOrbit = ({ data }) => {
           const radius = planetSize;
           const color = randomColor();
           const textureFile = "cardano.jpg";
-          const planetInfo = {
-            name: `Planet ${i + 1}`,
-            mass: `${Math.random() * 1000} kg`,
-            distance: `${orbitRadius} AU`,
-            orbitalPeriod: `${Math.random() * 100} years`
-          };
+
+          let planetInfo = {}
+
+          if (marketData[i] !== undefined && marketData[i].hasOwnProperty('id')) {
+            // do something with data[i]
+            planetInfo = {
+              name: marketData[i].id,
+              mass: `${Math.random() * 1000} kg`,
+              distance: `${orbitRadius} AU`,
+              orbitalPeriod: `${Math.random() * 100} years`
+            };
+          } else {
+            planetInfo = {
+              name: `Planet ${i + 1}`,
+              mass: `${Math.random() * 1000} kg`,
+              distance: `${orbitRadius} AU`,
+              orbitalPeriod: `${Math.random() * 100} years`
+            };
+
+          }
 
           data.push([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo]);
         }
@@ -84,8 +98,8 @@ const CoinOrbit = ({ data }) => {
       sceneManager.renderer.domElement.addEventListener("click", handlePlanetClick);
     }
 
-    sceneManage();
-  }, []);
+    sceneManage(data);
+  }, [data]);
 
   return (
     <div id="canvasParent" className="flex flex-col items-center justify-center">
