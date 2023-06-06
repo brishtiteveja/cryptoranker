@@ -19,29 +19,20 @@ const CoinOrbit = ({ marketData }) => {
         return colors[Math.floor(Math.random() * colors.length)];
       };
 
-      let maxMarketCap = Math.max(...marketData.map(item => item.market_cap));
-
-      // Find minimum market_cap
-      let minMarketCap = Math.min(...marketData.map(item => item.market_cap));
-
-      // Find maximum total_volume
-      let maxTotalVolume = Math.max(...marketData.map(item => item.total_volume));
-
-      // Find minimum total_volume
-      let minTotalVolume = Math.min(...marketData.map(item => item.total_volume));
-
       const generatePlanetData = (count) => {
         const planetData = [];
         for (let i = 0; i < count; i++) {
           
           const orbitRadius = 10 + i * 5;
-          const orbitSpeed = Math.random() * 0.002;
-          const curMarketCap = marketData[i].market_cap
+          let orbitSpeed = Math.random() * 0.002;
           let planetSize = 10;
-          if (maxMarketCap !== minMarketCap)
-            planetSize = Math.abs((curMarketCap - minMarketCap) / (maxMarketCap - minMarketCap)) * 10 + 1;
 
-          const radius = planetSize;
+
+
+          let radius;
+          let curBTCVolume;
+          let symbol = "btc";
+
           const color = randomColor();
 
           let textureFile = "cardano.jpg";
@@ -49,9 +40,39 @@ const CoinOrbit = ({ marketData }) => {
           let planetInfo = {}
 
           if (marketData[i] !== undefined && marketData[i].hasOwnProperty('id')) {
+
+            let maxMarketCap = Math.max(...marketData.map(item => item.market_cap));
+
+            // Find minimum market_cap
+            let minMarketCap = Math.min(...marketData.map(item => item.market_cap));
+
+            // Find maximum total_volume
+            let maxTotalVolume = Math.max(...marketData.map(item => item.total_volume));
+
+            // Find minimum total_volume
+            let minTotalVolume = Math.min(...marketData.map(item => item.total_volume));
+
+            let curMarketCap = marketData[i].market_cap
+            let curTotalVolume = marketData[i].total_volume
+            
+
+            planetSize = Math.abs((curMarketCap - minMarketCap) / (maxMarketCap - minMarketCap)) * 10 + 1;
+            radius = planetSize;
+
+            marketData.forEach(elem => {
+              if (elem.symbol === 'btc') {
+                curBTCVolume = elem.total_volume;
+              }
+            });
+
+            if (curTotalVolume === curBTCVolume) {
+              orbitSpeed = 0;
+            } else {
+              orbitSpeed = Math.abs(curTotalVolume /curBTCVolume) * 0.05 ;
+            }
+
             let crypto_symbol = marketData[i].symbol;
             textureFile = 'crypto_icons/' + crypto_symbol.toUpperCase() + '.png';
-            console.log(textureFile)
 
             // do something with data[i]
             planetInfo = {
@@ -60,6 +81,7 @@ const CoinOrbit = ({ marketData }) => {
               distance: `${orbitRadius} AU`,
               orbitalPeriod: `${Math.random() * 100} years`
             };
+
           } else {
             planetInfo = {
               name: `Planet ${i + 1}`,

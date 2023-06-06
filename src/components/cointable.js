@@ -141,7 +141,6 @@ const CoinTable = ({ data, setData }) => {
               return item
             })
             setData(res)
-            //console.log(res)
         });
     }, 90000);
 

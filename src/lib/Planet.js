@@ -29,10 +29,24 @@ export default class Planet {
       // const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
       this.mesh = new THREE.Mesh(geometry, material);
   
+      let x, y, z;
+      if (this.planetInfo.name === 'btc') {
+        x = 0;
+        y = 0;
+        z = 0;
+        console.log(this.planetInfo.name)
+
+      } else {
+        x = this.orbitRadius * Math.cos(this.orbitAngle) + 1000;
+        y = this.orbitRadius * Math.sin(this.orbitAngle) + 1000;
+        z = 0;
+
+      }
+
       this.mesh.position.set(
-        this.orbitRadius * Math.cos(this.orbitAngle) + 1000,
-        this.orbitRadius * Math.sin(this.orbitAngle) + 1000,
-        0
+        x,
+        y,
+        z
       );
   
       this.mesh.onClick = this.displayPlanetInfo.bind(this);
@@ -46,11 +60,27 @@ export default class Planet {
 
   rotate() {
     this.orbitAngle += this.orbitSpeed;
+    
+
+    let x, y, z;
+    
+
+    if (this.planetInfo.name === 'btc') {
+      x = 0;
+      y = 0;
+      z = 0;
+    } else {
+      x = this.orbitRadius * Math.cos(this.orbitAngle);
+      y = this.orbitRadius * Math.sin(this.orbitAngle);
+      z = 0;
+    }
+
     this.mesh.position.set(
-      this.orbitRadius * Math.cos(this.orbitAngle),
-      this.orbitRadius * Math.sin(this.orbitAngle),
-      0
+      x,
+      y,
+      z
     );
+
   }
 
   drawOrbit(scene, color, number) {
