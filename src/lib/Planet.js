@@ -20,14 +20,27 @@ export default class Planet {
 
   getMesh(scene) {
     if (this.mesh === null) {
-      const geometry = new THREE.SphereGeometry(this.radius);
+      // const geometry = new THREE.SphereGeometry(this.radius);
+      // const material = new THREE.MeshPhongMaterial({
+      //               map: new THREE.TextureLoader().load(this.textureFile),
+      //               transparent: false,
+      //               // opacity: 1,
+      // });
+      // // const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
+      // this.mesh = new THREE.Mesh(geometry, material);
+
+      this.mesh = new THREE.Group();
       const material = new THREE.MeshPhongMaterial({
-                    map: new THREE.TextureLoader().load(this.textureFile),
-                    transparent: false,
-                    // opacity: 1,
+        map: new THREE.TextureLoader().load(this.textureFile),
+        transparent: false,
+        opacity: 1,
       });
-      // const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(this.color) });
-      this.mesh = new THREE.Mesh(geometry, material);
+  
+      for (let i = 0; i < 4; i++) {
+        const geometry = new THREE.SphereGeometry(this.radius, 32, 32, i * Math.PI / 2, Math.PI / 2);
+        const sphereSegment = new THREE.Mesh(geometry, material);
+        this.mesh.add(sphereSegment);
+      }
   
       let x, y, z;
       if (this.planetInfo.name === 'btc') {
@@ -47,6 +60,12 @@ export default class Planet {
         x,
         y,
         z
+      );
+
+      this.mesh.rotation.set(
+        Math.PI/2,
+        -Math.PI/2,
+        0
       );
   
       this.mesh.onClick = this.displayPlanetInfo.bind(this);
