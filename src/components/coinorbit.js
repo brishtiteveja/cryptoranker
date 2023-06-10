@@ -98,7 +98,7 @@ const CoinOrbit = ({ marketData }) => {
         return planetData;
       };
 
-      const planetData = generatePlanetData(100);
+      const planetData = generatePlanetData(10);
 
 
       const planets = planetData.map(([radius, orbitRadius, orbitSpeed, planetSize, color, textureFile, planetInfo], index) => {

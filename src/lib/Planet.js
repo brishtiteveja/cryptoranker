@@ -53,7 +53,6 @@ export default class Planet {
         x = this.orbitRadius * Math.cos(this.orbitAngle) + 1000;
         y = this.orbitRadius * Math.sin(this.orbitAngle) + 1000;
         z = 0;
-
       }
 
       this.mesh.position.set(
@@ -64,7 +63,7 @@ export default class Planet {
 
       this.mesh.rotation.set(
         Math.PI/2,
-        -Math.PI/2,
+        -1.5*Math.PI/2,
         0
       );
   
