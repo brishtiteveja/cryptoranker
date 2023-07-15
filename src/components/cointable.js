@@ -7,6 +7,9 @@ import Table from './table'
 const CoinTable = ({ data, setData }) => {
     const [coinList, setCoinList] = useState([])
 
+    const [searchTerm, setSearchTerm] = useState('');
+    const [filteredData, setFilteredData] = useState([]);
+
     const BASE_API_URL = "https://api.coingecko.com/api/v3/"
     const COIN_LIST_API_URL = BASE_API_URL + "coins/list"
     // const MARKET_DATA_API_URL = BASE_API_URL + "coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250"
@@ -120,8 +123,20 @@ const CoinTable = ({ data, setData }) => {
           return item
         })
         setData(res)
+        setFilteredData(res);
       });
-    }, [MARKET_PRICE_DATA_API_URL, setData])
+    }, [MARKET_PRICE_DATA_API_URL, setData, setFilteredData])
+
+    useEffect(() => {
+      const filterData = () => {
+        const filtered = data.filter((item) =>
+          item.name.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+        setFilteredData(filtered);
+      };
+
+      filterData();
+    }, [data, searchTerm]);
     
     // refresh by fetching data every 120 seconds
     setTimeout(() => {
@@ -146,12 +161,22 @@ const CoinTable = ({ data, setData }) => {
 
     // Render the UI for your table
   return (
-    <div className="flex justify-center">
+    <div className="flex flex-col p-2 m-2">
+      <div className="flex ml-30 p-2">
+        <input
+          className="p-2 justify-center w-1/2 float-right"
+          type="text"
+          placeholder="Search Cryptocurrency"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
       {
         data && data.length > 0 ? (
+          <div className="flex">
             <Table 
               columns={columns} 
-              data={data} 
+              data={filteredData} 
               // getCellProps={(cellInfo) => ({
               //   style: {
               //     backgroundColor: cellInfo.value > 10000000000 ? "red" : null,
@@ -159,6 +184,7 @@ const CoinTable = ({ data, setData }) => {
               //   }
               // })}  
             />
+          </div>
         ): <h2> Fetching data ...</h2>
       }
     </div>
