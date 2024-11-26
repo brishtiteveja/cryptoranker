@@ -7,7 +7,24 @@ import time
 import pickle
 from datetime import datetime
 
-BASE_API_URL = "https://api.coingecko.com/api/v3/"
+from dotenv import load_dotenv
+
+# Load the .env file into environment variables
+load_dotenv()
+API_KEY = os.getenv('COINGECKO_API_KEY')
+
+# Update request headers
+headers = {
+    'accept': 'application/json',
+    'x-cg-api-key': API_KEY
+}
+
+headers = {
+    "accept": "application/json",
+    "x-cg-pro-api-key": API_KEY
+}
+
+BASE_API_URL = "https://pro-api.coingecko.com/api/v3/"
 COIN_LIST_API_URL = BASE_API_URL + "coins/list"
 MARKET_DATA_API_URL = BASE_API_URL + "coins/markets"
 coin_ids = []
@@ -16,17 +33,21 @@ coin_ids_in_rank = []
 global_query_count = 0
 hist_market_data = {}
 
+categories_data =[]
+category_map = {}
+
 todays_market_data = []
-max_page = 98
+max_page = 101
 
 SLEEP_TIMER=100
+MAX_YEARS=10
 MIN_COUNT_TO_SLEEP=4
 
 def get_api_response(url):
     global global_query_count
 
     try:
-        r = requests.get(url, auth=('user', 'pass'))
+        r = requests.get(url, headers="headers", auth=('user', 'pass'))
         global_query_count += 1
         if r.status_code == 200:
             res = r.json()
@@ -104,7 +125,7 @@ def get_historical_daily_coin_data(i, coin_id, days, interval="daily"):
     print("Getting coin #" + str(i))
 
     try:
-        r = requests.get(url, auth=('user', 'pass'))
+        r = requests.get(url, headers=headers, auth=('user', 'pass'))
         global_query_count += 1
         if r.status_code == 200:
             res = r.json()
@@ -122,7 +143,7 @@ def get_hist_market_data(coin_ids):
     global global_query_count
     global hist_market_data
     # 15 years
-    days = 365 * 15
+    days = 365 * MAX_YEARS
 
     n = len(coin_ids)
     i = 0
@@ -155,9 +176,11 @@ def get_hist_market_data(coin_ids):
             # now dump the current state of the data
             if not os.path.isdir('./data'):
                 os.mkdir('./data')
-            fname = './data/crypto_market_data_' +    'for_' + str(i) + '_coins_' + str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
-            with open(fname, 'wb') as f:
-                pickle.dump(hist_market_data, f)
+            
+            if i % 100 == 0:
+                fname = './data/crypto_market_data_' +    'for_' + str(i) + '_coins_' + str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
+                with open(fname, 'wb') as f:
+                    pickle.dump(hist_market_data, f)
 
     print("")
 
@@ -176,6 +199,64 @@ def get_allsundays():
 def all_days(year):
     return pd.date_range(start=str(year), end=str(year+1), freq='W-MON').strftime('%m/%d/%Y').tolist()
 
+def get_all_categories():
+    global categories_data
+    # Fetch categories
+    while True:
+        try:
+            categories_url = 'https://pro-api.coingecko.com/api/v3/coins/categories'
+            r = requests.get(categories_url, headers=headers)
+            if r.status_code == 200:
+                categories_data = r.json()
+                break
+            else:
+                time.sleep(5)
+                print("Error fetching categories: " + str(r.status_code) + " " + r.text)
+        except Exception as e:
+            time.sleep(5)
+            print("Error fetching categories: ", e)
+
+def map_cateogry_to_coins(limited_coins_data):
+    global category_map, categories_data
+    n = len(limited_coins_data)
+    i = 0
+    while i < n:
+        coin_id = limited_coins_data[i]
+        coin_details_url = f'https://pro-api.coingecko.com/api/v3/coins/{coin_id}'
+        try:
+            r = requests.get(coin_details_url, headers=headers)
+            coin_details_data = r.json()
+            
+            if r.status_code != 200:
+                print(f"Error fetching details for coin {coin_id}: {r.status_code} {r.text}. Sleeping...")
+                time.sleep(SLEEP_TIMER)
+                continue
+            
+            # Some coins might not have the 'categories' field
+            coin_categories = coin_details_data.get('categories', [])
+
+            for i, cat in enumerate(categories_data):
+                c = categories_data[i].get('name', [])
+                category_map[c] = cat
+                category_map[c]['coins'] = []
+            
+            for category_id in category_map.keys():
+                if category_id in coin_categories:
+                    category_map[category_id]['coins'].append({
+                        # 'id': coin_id['id'],
+                        # 'symbol': coin['symbol'],
+                        'name': coin_id
+                    })
+                    
+            # Be respectful to the API's rate limit
+            time.sleep(5)
+            i += 1
+        except Exception as e:
+            print(f"Error fetching details for coin {coin_id}: {e}")
+            time.sleep(5)
+            print(f"Sleep and Try again..")
+
+    pass
 
 def main():
     global hist_market_data
@@ -183,9 +264,21 @@ def main():
 
     # # get coin ids in rank
     get_coin_ids_in_rank()
-
+    
     # # now get historical market_cap for all ranked coins for several years
     sel_coin = coin_ids_in_rank
+
+    # get coin categories
+    global categories_data, category_map
+    get_all_categories()
+    map_cateogry_to_coins(sel_coin)
+    
+    print(category_map)
+
+    fname = 'crypto_category_data_' +  str(datetime.now().strftime("%Y%m%d_%H%M%S")) + '.pkl'
+    with open(fname, 'wb') as f:
+        pickle.dump(category_map, f)
+
     get_hist_market_data(sel_coin)
 
     # print("hello")
@@ -199,8 +292,8 @@ def main():
     # generate the chart
 
 if __name__ == "__main__":
-    # coin_ids = ["tezos", "bitcoin", "ethereum"]
-    # get_hist_market_data()
+    #coin_ids = ["bitcoin", "ethereum"]
+    #get_hist_market_data(coin_ids)
 
     main()
 
