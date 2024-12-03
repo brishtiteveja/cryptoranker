@@ -598,14 +598,14 @@ if __name__ == "__main__":
                 df.to_csv(csv_filename, index=False)
                 print(f"Saved data for tab '{tab_name}' to {csv_filename}")
         
-        if data is not None:
-            print("\nSample of scraped data:")
-            print(data.head())
+        # if data is not None:
+        #     print("\nSample of scraped data:")
+        #     print(data.head())
             
-            # Save to MongoDB
-            import scraper_utils
-            client = scraper_utils.connect_to_mongodb()
-            save_to_mongodb(data, client)
+        #     # Save to MongoDB
+        #     import scraper_utils
+        #     client = scraper_utils.connect_to_mongodb()
+        #     save_to_mongodb(data, client)
             
             
     except Exception as e:
