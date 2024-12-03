@@ -1,5 +1,13 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
+crypto_collector.log
+*.pkl
+data/
+data-backup
+.env
+__pycache__
+old/
+
 # dependencies
 /node_modules
 /.pnp
