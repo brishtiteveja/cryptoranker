@@ -50,7 +50,7 @@ class CryptoDataManager:
 
     def __init__(self):
         self.client = MongoClient()
-        self.db_manager = self.connect_to_db()
+        self.db = self.connect_to_db()
         
         # Create indexes for better query performance
         self.db.coins.create_index("coin_id", unique=True)
@@ -113,7 +113,7 @@ class CryptoDataManager:
                     
                     if r.status_code == 200:
                         coin_details = r.json()
-                        coin_categories = coin_details.get('category', [])
+                        coin_categories = coin_details.get('categories', [])
                         
                         # Update categories in MongoDB
                         update_doc = {
@@ -150,7 +150,7 @@ class CryptoDataManager:
                         logging.info(f"Updated categories for {coin_id}: {coin_categories}")
                         
                         # Respect API rate limits
-                        time.sleep(self.SLEEP_TIMER / 1000)  # Convert ms to seconds
+                        #time.sleep(self.SLEEP_TIMER / 1000)  # Convert ms to seconds
                         
                     else:
                         logging.error(f"Error fetching details for {coin_id}: {r.status_code}")
@@ -188,22 +188,58 @@ class CryptoDataManager:
             upsert=True
         )
 
-    def save_categories(self, categories_data):
+    def fetch_category_list(self):
+        """Fetch the category list from the API"""
+        api_url = f"{self.BASE_API_URL}coins/categories/list"
+        response = requests.get(api_url, headers=self.headers)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            response.raise_for_status()
+
+    def save_categories(self):
         """Save category information"""
-        for category in categories_data:
-            category_doc = {
-                "name": category["name"],
-                "market_cap": category.get("market_cap", 0),
-                "volume_24h": category.get("volume_24h", 0),
-                "coins_count": category.get("coins_count", 0),
-                "updated_at": datetime.now()
-            }
-            
-            self.db.categories.update_one(
-                {"name": category_doc["name"]},
-                {"$set": category_doc},
-                upsert=True
-            )
+        # Check the number of coins in the database
+        coins_count = self.db.coins.count_documents({})
+        if coins_count == 0:
+            logging.warning("No coins found in the database.")
+            return
+
+        # Fetch the category list from the API
+        category_list = self.fetch_category_list()
+        category_map = {category['name']: category['category_id'] for category in category_list}
+
+        # Aggregate and count the number of coins in each category, and include the list of coins
+        pipeline = [
+            {"$unwind": "$category"},
+            {"$group": {
+                "_id": "$category",
+                "coins_count": {"$sum": 1},
+                "coins": {"$push": "$coin_id"}
+            }}
+        ]
+        
+        try:
+            categories_data = list(self.db.coins.aggregate(pipeline))
+            if not categories_data:
+                logging.warning("No categories data found. Please check the database and pipeline.")
+        
+            for category in categories_data:
+                category_doc = {
+                    "name": category["_id"],
+                    "category_id": category_map.get(category["_id"], None),
+                    "coins_count": category["coins_count"],
+                    "coins": category["coins"],
+                    "updated_at": datetime.now()
+                }
+                
+                self.db.categories.update_one(
+                    {"name": category_doc["name"]},
+                    {"$set": category_doc},
+                    upsert=True
+                )
+        except Exception as e:
+            logging.error(f"Error while aggregating categories: {e}")
 
     def save_category_rankings(self, category_map):
         """Save coin rankings within categories"""
@@ -696,7 +732,7 @@ class CryptoDataCollector:
 
     def load_or_fetch_initial_data(self, must_fetch=False):
         """Load initial data from cache or fetch if not available"""
-        cache_file = script_dir + '/../data/initial_data_cache.pkl'
+        cache_file = script_dir + '/../../../data-backup/initial_data_cache.pkl'
         
         # Try to load from cache
         if not must_fetch and os.path.exists(cache_file):
@@ -807,7 +843,7 @@ class CryptoDataPipeline:
             
             # Save categories to MongoDB
             if self.save_categories:
-                self.db_manager.save_categories(self.collector.categories_data)
+                self.db_manager.save_categories()
             
                 # Save coin metadata and category rankings
                 for coin_data in self.collector.todays_market_data:
@@ -954,14 +990,14 @@ def main():
     pipeline = CryptoDataPipeline()
 
     # Set pipeline options
-    pipeline.load_or_fetch_initial_data = False
-    pipeline.collect_daily_hist_data= False
+    pipeline.load_or_fetch_initial_data = True
     pipeline.save_categories=False
+    pipeline.collect_daily_hist_data= False
     pipeline.save_category_ranks=False
-    pipeline.fix_categories=False
+    pipeline.fix_categories=True
     pipeline.start_scheduler=False
     
-    pipeline.will_daily_update=True
+    pipeline.will_daily_update=False
 
     #pipeline.db_manager.rename_field("coins", "current_stats", "stats")
 
@@ -972,5 +1008,5 @@ def test():
     dm.db_manager.get_historical_dataframe()
 
 if __name__ == "__main__":
-    #main()
-    test()
+    main()
+    #test()
