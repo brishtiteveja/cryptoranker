@@ -12,6 +12,9 @@ from datetime import datetime
 import numpy as np
 import logging
 
+# get current script directory
+script_dir = os.path.dirname(__file__)
+
 config = {
     'api': {
         'sleep_timer': 100,
@@ -28,9 +31,9 @@ config = {
     }
 }
 
-class MetricsCollector:
+class statsCollector:
     def __init__(self):
-        self.metrics = {
+        self.stats = {
             'api_calls': 0,
             'api_errors': 0,
             'db_writes': 0,
@@ -39,22 +42,142 @@ class MetricsCollector:
         }
 
 class CryptoDataManager:
+    def connect_to_db(self):
+        # Replace with your actual database connection logic
+        from pymongo import MongoClient
+        client = MongoClient('mongodb://localhost:27017/')
+        return client['crypto_db']
+
     def __init__(self):
         self.client = MongoClient()
-        self.db = self.client.crypto_db
+        self.db_manager = self.connect_to_db()
         
         # Create indexes for better query performance
         self.db.coins.create_index("coin_id", unique=True)
         self.db.historical_data.create_index([("coin_id", 1), ("timestamp", 1)])
         self.db.categories.create_index("name", unique=True)
 
-    def save_coin_metadata(self, coin_data):
+        self.BASE_API_URL = "https://pro-api.coingecko.com/api/v3/"
+        self.COIN_LIST_API_URL = self.BASE_API_URL + "coins/list"
+        self.MARKET_DATA_API_URL = self.BASE_API_URL + "coins/markets"
+        self.headers={"x-cg-pro-api-key": os.getenv('COINGECKO_API_KEY')}
+
+    def rename_field(self, collection_name="coins", old_field="category", new_field="cateogory"):
+        """Rename a field in specified collection"""
+        try:
+            # Check document structure
+            sample = self.db[collection_name].find_one()
+            logging.info(f"Sample document fields: {list(sample.keys())}")
+
+            # Perform rename with explicit query
+            result = self.db[collection_name].update_many(
+                {old_field: {"$exists": True}},  # Explicitly find documents with the field
+                {"$rename": {old_field: new_field}},
+                upsert=False
+            )
+            logging.info(f"Renamed {old_field} to {new_field} in {result.modified_count} documents")
+            
+        except Exception as e:
+            logging.error(f"Error during rename: {str(e)}")
+            
+    def fix_missing_categories(self, coin_ids=None):
+        """
+        Check and fix missing categories for coins in MongoDB.
+        If coin_ids is None, processes all coins in database.
+        """
+        try:
+            # If no specific coins provided, get all coins from DB
+            if coin_ids is None:
+                cursor = self.db.coins.find(
+                    {
+                        "$or": [
+                            {"category": {"$exists": False}},
+                            {"category": []},
+                            {"category_ranks": {"$exists": False}},
+                            {"category_ranks": {}}
+                        ]
+                    },
+                    {"coin_id": 1}
+                )
+                coin_ids = [doc["coin_id"] for doc in cursor]
+
+            logging.info(f"Found {len(coin_ids)} coins with missing categories")
+            
+            for i, coin_id in enumerate(coin_ids):
+                try:
+                    # Fetch coin details from CoinGecko
+                    coin_details_url = f'{self.BASE_API_URL}coins/{coin_id}'
+                    logging.info(f"Fixing categories for {i}.{coin_id} with url: {coin_details_url}")
+                    print(f"Fixing categories for {i}.{coin_id} with url: {coin_details_url}")
+                    r = requests.get(coin_details_url, headers=self.headers)
+                    
+                    if r.status_code == 200:
+                        coin_details = r.json()
+                        coin_categories = coin_details.get('category', [])
+                        
+                        # Update categories in MongoDB
+                        update_doc = {
+                            "$set": {
+                                "category": coin_categories,
+                                "updated_at": datetime.now()
+                            }
+                        }
+                        
+                        # If category_ranks is empty, initialize it
+                        if not self.db.coins.find_one({"coin_id": coin_id}).get("category_ranks"):
+                            category_ranks = {}
+                            # Calculate rank for each category
+                            for category in coin_categories:
+                                # Get all coins in this category
+                                category_coins = self.db.coins.find(
+                                    {"category": category},
+                                    {"coin_id": 1}
+                                ).sort("market_cap", -1)
+                                
+                                # Find rank of current coin
+                                for rank, cat_coin in enumerate(category_coins, 1):
+                                    if cat_coin["coin_id"] == coin_id:
+                                        category_ranks[category] = rank
+                                        break
+                            
+                            update_doc["$set"]["category_ranks"] = category_ranks
+                        
+                        self.db.coins.update_one(
+                            {"coin_id": coin_id},
+                            update_doc
+                        )
+                        
+                        logging.info(f"Updated categories for {coin_id}: {coin_categories}")
+                        
+                        # Respect API rate limits
+                        time.sleep(self.SLEEP_TIMER / 1000)  # Convert ms to seconds
+                        
+                    else:
+                        logging.error(f"Error fetching details for {coin_id}: {r.status_code}")
+                        
+                except Exception as e:
+                    logging.error(f"Error processing coin {coin_id}: {str(e)}")
+                    continue
+                    
+        except Exception as e:
+            logging.error(f"Error in fix_missing_categories: {str(e)}")
+            raise
+    
+    
+    
+    def save_coin_metadata(self, coin_data, category_map):
         """Save coin metadata with categories"""
+        # Get categories from category map if available
+        coin_categories = []
+        for category in category_map.values():
+            if any(coin['name'] == coin_data['id'] for coin in category['coins']):
+                coin_categories.append(category['name'])
+                
         coin_doc = {
             "coin_id": coin_data["id"],
             "symbol": coin_data["symbol"],
             "name": coin_data["name"],
-            "categories": coin_data.get("categories", []),
+            "category": coin_categories,  # Use gathered categories
             "category_ranks": {},  # Will be updated with ranks
             "updated_at": datetime.now()
         }
@@ -109,12 +232,25 @@ class CryptoDataManager:
                     }
                 )
 
-    def save_historical_data(self, coin_id, timestamp, metrics):
-        """Save historical price, volume, market cap data"""
+    def save_historical_data(self, coin_id, timestamp, stats):
+        """
+        Save historical price, volume, market cap data if it doesn't exist
+        Returns: bool indicating whether data was saved
+        """
+        # Check if data already exists for this coin and timestamp
+        existing_data = self.db.historical_data.find_one({
+            "coin_id": coin_id,
+            "timestamp": timestamp
+        })
+        
+        if existing_data:
+            logging.info(f"Historical data already exists for {coin_id} at {timestamp}")
+            return False
+            
         doc = {
             "coin_id": coin_id,
             "timestamp": timestamp,
-            "metrics": metrics,
+            "stats": stats,
             "updated_at": datetime.now()
         }
         
@@ -123,6 +259,7 @@ class CryptoDataManager:
             {"$set": doc},
             upsert=True
         )
+        return True
 
     def health_check(self):
         try:
@@ -158,9 +295,9 @@ class CryptoDataManager:
             {
                 "$group": {
                     "_id": "$coin_id",
-                    "prices": {"$push": "$metrics.price"},
-                    "volumes": {"$push": "$metrics.volume"},
-                    "market_caps": {"$push": "$metrics.market_cap"}
+                    "prices": {"$push": "$stats.price"},
+                    "volumes": {"$push": "$stats.volume"},
+                    "market_caps": {"$push": "$stats.market_cap"}
                 }
             }
         ]
@@ -171,7 +308,7 @@ class CryptoDataManager:
         coin_metadata = list(self.db.coins.find({}, {
             "_id": 0,
             "coin_id": 1,
-            "categories": 1,
+            "category": 1,
             "category_ranks": 1
         }))
         
@@ -192,7 +329,7 @@ class CryptoDataManager:
                     hist["market_caps"]
                 ], axis=-1))
                 category_data.append({
-                    "categories": metadata["categories"],
+                    "category": metadata["category"],
                     "ranks": metadata["category_ranks"]
                 })
         
@@ -218,12 +355,13 @@ class CryptoDataManager:
             # Store category information as attributes
             for i, coin_id in enumerate(data['coin_ids']):
                 group = f.create_group(f'coin_{i}_categories')
-                categories = data['category_data'][i]['categories']
+                categories = data['category_data'][i]['category']
                 ranks = data['category_data'][i]['ranks']
-                group.attrs['categories'] = str(categories)
+                group.attrs['category'] = str(categories)
                 group.attrs['category_ranks'] = str(ranks)
 
-    def get_historical_dataframe(years=1):
+    
+    def get_historical_dataframe(self, years=1):
         start_date = datetime.now() - timedelta(days=365 * years)
         pipeline = [
             {
@@ -235,28 +373,27 @@ class CryptoDataManager:
                 "$project": {
                     "_id": 0,
                     "timestamp": 1,
-                    "coin_id": 1,
-                    "price": "$stats.price",
-                    "market_cap": "$stats.market_cap",
-                    "volume": "$stats.volume"
+                    "market_cap": 1,
+                    "coin_id": 1
                 }
             }
         ]
-        cursor = self.db.historical_data.aggregate(pipeline)
+        cursor = self.db_manager.historical_data.aggregate(pipeline)
         df = pd.DataFrame(list(cursor))
         df = df.rename(columns={
             'timestamp': 'Date',
-            'coin_id': 'Crypto',
             'market_cap': 'MarketCap',
-            'price': 'Price',
-            'volume': 'Volume'
+            'coin_id': 'Crypto'
         })
         # Filter out rows with zero market cap
         df = df[df['MarketCap'] != 0]
         return df
 
 class CryptoDataCollector:
+
     def __init__(self):
+        self.db_manager = CryptoDataManager()
+
         # Load environment variables
         load_dotenv()
         self.API_KEY = os.getenv('COINGECKO_API_KEY')
@@ -371,6 +508,73 @@ class CryptoDataCollector:
         logging.info(f"Getting coin #{i}: {coin_id}")
         return self.get_api_response(url)
 
+    def save_historical_datapoints(self, coin_id, historical_data):
+        """
+        Process and save historical data points for a given coin
+        
+        Args:
+            coin_id (str): The ID of the coin
+            historical_data (dict): Dictionary containing prices, market_caps, and total_volumes
+            
+        Returns:
+            tuple: (saved_count, error_count)
+        """
+        saved_count = 0
+        error_count = 0
+        
+        try:
+            # Validate data structure
+            if not all(key in historical_data for key in ['prices', 'market_caps', 'total_volumes']):
+                logging.error(f"Missing required data fields for {coin_id}")
+                return saved_count, error_count
+            
+            for price_data, market_cap_data, volume_data in zip(
+                historical_data['prices'],
+                historical_data['market_caps'],
+                historical_data['total_volumes']
+            ):
+                try:
+                    # Convert timestamp from milliseconds to datetime
+                    timestamp = datetime.fromtimestamp(price_data[0]/1000)
+                    
+                    # Prepare stats
+                    stats = {
+                        'price': price_data[1],
+                        'market_cap': market_cap_data[1],
+                        'volume': volume_data[1]
+                    }
+                    
+                    # Save to MongoDB
+                    doc = {
+                        "coin_id": coin_id,
+                        "timestamp": timestamp,
+                        "stats": stats,
+                        "updated_at": datetime.now()
+                    }
+                    
+                    # Update with upsert
+                    self.db_manager.db.historical_data.update_one(
+                        {
+                            "coin_id": coin_id,
+                            "timestamp": timestamp
+                        },
+                        {"$set": doc},
+                        upsert=True
+                    )
+                    saved_count += 1
+                    
+                except Exception as e:
+                    logging.error(f"Error saving data point for {coin_id} at {timestamp}: {str(e)}")
+                    error_count += 1
+                    continue
+                    
+            logging.info(f"Processed {saved_count} points for {coin_id} with {error_count} errors")
+            
+        except Exception as e:
+            logging.error(f"Error processing historical data for {coin_id}: {str(e)}")
+            
+        return saved_count, error_count
+
     def get_hist_market_data(self, coin_ids):
         """Fetch historical market data for multiple coins"""
         days = 365 * self.MAX_YEARS
@@ -379,7 +583,8 @@ class CryptoDataCollector:
         
         while i < len(coin_ids):
             coin_id = coin_ids[i]
-            logging.info(f"Getting historical market cap data for coin id = {coin_id}")
+            logging.info(f"Getting historical market cap data for {i}.coin id = {coin_id}")
+            print(f"Getting historical market cap data for {i}.coin id = {coin_id}")
             
             if coin_id not in self.hist_market_data:
                 try:
@@ -399,6 +604,8 @@ class CryptoDataCollector:
 
             if res is not None:
                 self.hist_market_data[coin_id] = res
+
+                self.save_historical_datapoints(coin_id, res) 
                 i += 1
 
                 if i % 100 == 0:
@@ -448,47 +655,30 @@ class CryptoDataCollector:
 
     def map_category_to_coins(self, limited_coins_data):
         """Map coins to their categories"""
-        n = len(limited_coins_data)
-        coin_index = 0  # renamed from i to avoid conflict
-        err_cnt = 0
-        
-        while coin_index < n:
-            coin_id = limited_coins_data[coin_index]
-            coin_details_url = f'{self.BASE_API_URL}coins/{coin_id}'
+        for coin_id in limited_coins_data:
             try:
-                logging.info(f"{coin_index + 1}. Fetching details for coin {coin_id}")
-                print(f"{coin_index + 1}. Fetching details for coin {coin_id}")
+                coin_details_url = f'{self.BASE_API_URL}coins/{coin_id}'
                 r = requests.get(coin_details_url, headers=self.headers)
-                coin_details_data = r.json()
                 
-                if r.status_code != 200:
-                    logging.error(f"Error fetching details for coin {coin_id}: {r.status_code} {r.text}")
-                    print(f"Error fetching details for coin {coin_id}: {r.status_code} {r.text}")
-                    time.sleep(self.SLEEP_TIMER)
-                    continue
-                
-                coin_categories = coin_details_data.get('categories', [])
-                
-                # Changed this loop to use different variable
-                for cat_idx, cat in enumerate(self.categories_data):
-                    c = self.categories_data[cat_idx].get('name', [])
-                    self.category_map[c] = cat
-                    self.category_map[c]['coins'] = []
-                
-                for category_id in self.category_map.keys():
-                    if category_id in coin_categories:
-                        self.category_map[category_id]['coins'].append({'name': coin_id})
-                
-                coin_index += 1  # increment the main counter
-                err_cnt = 0  # reset error count on success
-                
+                if r.status_code == 200:
+                    coin_details = r.json()
+                    coin_categories = coin_details.get('category', [])
+                    
+                    # Update each category with this coin
+                    for category in coin_categories:
+                        if category not in self.category_map:
+                            self.category_map[category] = {
+                                'name': category,
+                                'coins': []
+                            }
+                        self.category_map[category]['coins'].append({
+                            'name': coin_id,
+                            'category': coin_categories  # Store categories with the coin
+                        })
+                        
             except Exception as e:
-                err_cnt += 1
-                logging.error(f"Error fetching details for coin {coin_id}: {e}")
-                print(f"Error fetching details for coin {coin_id}: {e}")
-                if err_cnt >= 3:
-                    coin_index += 1  # move to next coin after 3 errors
-                    err_cnt = 0  # reset error count
+                logging.error(f"Error processing coin {coin_id}: {e}")
+                continue
 
     def save_category_data(self):
         """Save category mapping data"""
@@ -506,7 +696,7 @@ class CryptoDataCollector:
 
     def load_or_fetch_initial_data(self, must_fetch=False):
         """Load initial data from cache or fetch if not available"""
-        cache_file = './data/initial_data_cache.pkl'
+        cache_file = script_dir + '/../data/initial_data_cache.pkl'
         
         # Try to load from cache
         if not must_fetch and os.path.exists(cache_file):
@@ -570,11 +760,21 @@ import logging
 from datetime import datetime, timedelta
 
 class CryptoDataPipeline:
+    
     def __init__(self):
+        # Setup options
+        self.load_or_fetch_initial_data = False
+        self.collect_daily_hist_data = False
+        self.save_categories=False
+        self.save_category_ranks=False
+        self.fix_categories=False
+        self.start_scheduler=False
+        self.will_daily_update=False
+
         self.collector = CryptoDataCollector()  # Your existing collector
         self.db_manager = CryptoDataManager()   # MongoDB manager
         self.scheduler = BlockingScheduler()
-        self.metrics = MetricsCollector()
+        self.stats = statsCollector()
         
         # Setup logging
         logging.basicConfig(
@@ -583,42 +783,41 @@ class CryptoDataPipeline:
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
 
-    def initial_load(self):
+    def initial_load(self,
+                     save_categories=False,
+                     save_category_ranks=False,
+                     fix_categories=False
+                     ):
         """Initial data load and setup"""
         try:
             logging.info("Starting initial data load")
             
             # Run collector to get initial data
-            retries = 3
         
-            while retries > 0:
-                try:
-                    self.collector.load_or_fetch_initial_data()
-                    break
-                except Exception as e:
-                    retries -= 1
-                    logging.error(f"Retry {3-retries}/3: {str(e)}")
-                    time.sleep(300)  # 5 minute wait between retries
+            if self.load_or_fetch_initial_data:
+                retries = 3
+                while retries > 0:
+                    try:
+                        self.collector.load_or_fetch_initial_data()
+                        break
+                    except Exception as e:
+                        retries -= 1
+                        logging.error(f"Retry {3-retries}/3: {str(e)}")
+                        time.sleep(300)  # 5 minute wait between retries
             
             # Save categories to MongoDB
-            self.db_manager.save_categories(self.collector.categories_data)
+            if self.save_categories:
+                self.db_manager.save_categories(self.collector.categories_data)
             
-            # Save coin metadata and category rankings
-            for coin_data in self.collector.todays_market_data:
-                self.db_manager.save_coin_metadata(coin_data)
-            self.db_manager.save_category_rankings(self.collector.category_map)
-            
-            # Save historical data
-            for coin in self.collector.hist_market_data:
-                self.db_manager.save_historical_data(
-                    coin_id=coin['id'],
-                    timestamp=datetime.now(),
-                    metrics={
-                        'price': coin['current_price'],
-                        'volume': coin['total_volume'],
-                        'market_cap': coin['market_cap']
-                    }
-                )
+                # Save coin metadata and category rankings
+                for coin_data in self.collector.todays_market_data:
+                    self.db_manager.save_coin_metadata(coin_data, self.collector.category_map)
+
+            if self.save_category_ranks:
+                self.db_manager.save_category_rankings(self.collector.category_map)
+
+            if self.fix_categories:
+                self.db_manager.fix_missing_categories()
             
             logging.info("Initial data load completed")
             
@@ -627,41 +826,76 @@ class CryptoDataPipeline:
             raise
 
     def daily_update(self):
-        """Daily update job"""
+        """Daily update job with per-coin backfill functionality"""
         try:
             logging.info(f"Starting daily update at {datetime.now()}")
-            
-            # Get latest data for all coins
             self.collector.get_market_data()
             
-            # Update categories if needed (weekly)
-            if datetime.now().weekday() == 0:  # Monday
-                self.collector.get_all_categories()
-                self.collector.map_category_to_coins(self.collector.coin_ids_in_rank)
-                self.db_manager.save_categories(self.collector.categories_data)
-                self.db_manager.save_category_rankings(self.collector.category_map)
-            
-            # Update historical data for each coin
-            for coin_data in self.collector.todays_market_data:
-                self.db_manager.save_historical_data(
-                    coin_id=coin_data['id'],
-                    timestamp=datetime.now(),
-                    metrics={
-                        'price': coin_data['current_price'],
-                        'volume': coin_data['total_volume'],
-                        'market_cap': coin_data['market_cap']
+            for i, coin_data in enumerate(self.collector.todays_market_data):
+                coin_id = coin_data["id"]
+                
+                # Find last update for this specific coin
+                last_update = self.db_manager.db.historical_data.find_one(
+                    {"coin_id": coin_id},
+                    sort=[("timestamp", -1)]
+                )
+                
+                last_date = last_update["timestamp"] if last_update else datetime.now() - timedelta(days=365)
+                days_to_fetch = (datetime.now() - last_date).days
+                
+                logging.info(f"Processing {i+1}.{coin_id}: Last update {last_date}, need to fetch {days_to_fetch} days")
+                print(f"Processing {i+1}.{coin_id}: Last update {last_date}, need to fetch {days_to_fetch} days")
+                
+                # Fetch missing historical data if needed
+                if days_to_fetch > 1:
+                    hist_data = self.collector.get_historical_daily_coin_data(
+                        i, coin_id, days_to_fetch
+                    )
+                    if hist_data:
+                        self.collector.save_historical_datapoints(coin_id, hist_data)
+                
+                # Update today's stats
+                current_stats = {
+                    'price': coin_data['current_price'],
+                    'volume': coin_data['total_volume'],
+                    'market_cap': coin_data['market_cap']
+                }
+                
+                # Update historical_data
+                today_midnight = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                self.db_manager.db.historical_data.update_one(
+                    {
+                        "coin_id": coin_id,
+                        "timestamp": today_midnight
+                    },
+                    {
+                        "$set": {
+                            "stats": current_stats,
+                            "updated_at": datetime.now()
+                        }
+                    },
+                    upsert=True
+                )
+                
+                # Update coins collection
+                self.db_manager.db.coins.update_one(
+                    {"coin_id": coin_id},
+                    {
+                        "$set": {
+                            "stats": current_stats,
+                            "updated_at": datetime.now()
+                        }
                     }
                 )
-            
-            # Export ML-ready data periodically (weekly)
-            if datetime.now().weekday() == 0:
-                self.db_manager.export_to_hdf5()
-            
+                
+                time.sleep(self.collector.SLEEP_TIMER / 1000)
+                
             logging.info("Daily update completed successfully")
+            print("Daily update completed successfully")
             
         except Exception as e:
             logging.error(f"Error in daily update: {str(e)}")
-            # Optionally, add retry logic or notifications here
+            raise
 
     def setup_scheduler(self):
         """Setup the scheduler for daily updates"""
@@ -676,18 +910,35 @@ class CryptoDataPipeline:
         
         logging.info("Scheduler setup completed")
 
+    
+
     def run(self):
         """Main execution method"""
         try:
             # Initial setup and data load
-            self.initial_load()
-            
-            # Setup scheduler
-            self.setup_scheduler()
-            
+            self.initial_load(
+                save_categories=self.save_categories,
+                save_category_ranks=self.save_category_ranks,
+                fix_categories=self.fix_categories
+            )
+
+
+            if self.collect_daily_hist_data:
+                self.collector.get_hist_market_data(self.collector.coin_ids_in_rank)
+                self.collector.save_market_data()
+
             # Start the scheduler
-            logging.info("Starting scheduler...")
-            self.scheduler.start()
+            if self.start_scheduler:
+                logging.info("Starting scheduler...")
+                # Setup scheduler
+                self.setup_scheduler()
+
+                self.daily_update()
+
+                self.scheduler.start()            
+            elif self.will_daily_update:
+                self.daily_update()
+            
             
         except (KeyboardInterrupt, SystemExit):
             logging.info("Shutting down scheduler...")
@@ -701,9 +952,25 @@ def main():
     # pip install apscheduler
     
     pipeline = CryptoDataPipeline()
+
+    # Set pipeline options
+    pipeline.load_or_fetch_initial_data = False
+    pipeline.collect_daily_hist_data= False
+    pipeline.save_categories=False
+    pipeline.save_category_ranks=False
+    pipeline.fix_categories=False
+    pipeline.start_scheduler=False
     
-    pipeline.db_manager.get_historical_dataframe(years=1)
-    #pipeline.run()
+    pipeline.will_daily_update=True
+
+    #pipeline.db_manager.rename_field("coins", "current_stats", "stats")
+
+    pipeline.run()
+
+def test():
+    dm = CryptoDataCollector()
+    dm.db_manager.get_historical_dataframe()
 
 if __name__ == "__main__":
-    main()
+    #main()
+    test()
