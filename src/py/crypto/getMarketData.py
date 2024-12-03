@@ -223,6 +223,37 @@ class CryptoDataManager:
                 group.attrs['categories'] = str(categories)
                 group.attrs['category_ranks'] = str(ranks)
 
+    def get_historical_dataframe(years=1):
+        start_date = datetime.now() - timedelta(days=365 * years)
+        pipeline = [
+            {
+                "$match": {
+                    "timestamp": {"$gte": start_date}
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "timestamp": 1,
+                    "coin_id": 1,
+                    "price": "$stats.price",
+                    "market_cap": "$stats.market_cap",
+                    "volume": "$stats.volume"
+                }
+            }
+        ]
+        cursor = self.db.historical_data.aggregate(pipeline)
+        df = pd.DataFrame(list(cursor))
+        df = df.rename(columns={
+            'timestamp': 'Date',
+            'coin_id': 'Crypto',
+            'market_cap': 'MarketCap',
+            'price': 'Price',
+            'volume': 'Volume'
+        })
+        # Filter out rows with zero market cap
+        df = df[df['MarketCap'] != 0]
+        return df
 
 class CryptoDataCollector:
     def __init__(self):
@@ -670,7 +701,9 @@ def main():
     # pip install apscheduler
     
     pipeline = CryptoDataPipeline()
-    pipeline.run()
+    
+    pipeline.db_manager.get_historical_dataframe(years=1)
+    #pipeline.run()
 
 if __name__ == "__main__":
     main()
