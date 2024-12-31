@@ -454,7 +454,7 @@ class CryptoDataCollector:
         self.todays_market_data = []
         
         # Configuration
-        self.max_page = 101
+        self.max_page = 201
         self.SLEEP_TIMER = 100
         self.MAX_YEARS = 10
         self.MIN_COUNT_TO_SLEEP = 101
@@ -983,6 +983,52 @@ class CryptoDataPipeline:
             logging.error(f"Fatal error in main execution: {str(e)}")
             raise
 
+    def copy_collection_to_new_db(self,
+        source_uri,
+        dest_uri,
+        source_db,
+        dest_db,
+        source_collection,
+        dest_collection
+    ):
+        """
+        Copy a MongoDB collection from one database to another with a new name.
+        
+        Args:
+            source_uri (str): MongoDB connection URI for source database
+            dest_uri (str): MongoDB connection URI for destination database
+            source_db (str): Name of the source database
+            dest_db (str): Name of the destination database
+            source_collection (str): Name of the source collection
+            dest_collection (str): New name for the collection in destination database
+        """
+        try:
+            # Connect to source database
+            source_client = MongoClient(source_uri)
+            source = source_client[source_db][source_collection]
+            
+            # Connect to destination database
+            dest_client = MongoClient(dest_uri)
+            dest = dest_client[dest_db][dest_collection]
+            
+            # Fetch all documents from source collection
+            documents = source.find()
+            
+            # If documents exist, insert them into destination collection
+            doc_list = list(documents)
+            if doc_list:
+                dest.insert_many(doc_list)
+                print(f"Successfully copied {len(doc_list)} documents from {source_db}.{source_collection} to {dest_db}.{dest_collection}")
+            else:
+                print("No documents found in source collection")
+                
+        except Exception as e:
+            print(f"An error occurred: {str(e)}")
+            
+        finally:
+            # Close connections
+            source_client.close()
+            dest_client.close()
 def main():
     # Install APScheduler if not already installed
     # pip install apscheduler
@@ -990,14 +1036,14 @@ def main():
     pipeline = CryptoDataPipeline()
 
     # Set pipeline options
-    pipeline.load_or_fetch_initial_data = True
+    pipeline.load_or_fetch_initial_data = False
     pipeline.save_categories=False
     pipeline.collect_daily_hist_data= False
     pipeline.save_category_ranks=False
-    pipeline.fix_categories=True
+    pipeline.fix_categories=False
     pipeline.start_scheduler=False
     
-    pipeline.will_daily_update=False
+    pipeline.will_daily_update=True
 
     #pipeline.db_manager.rename_field("coins", "current_stats", "stats")
 
@@ -1007,6 +1053,28 @@ def test():
     dm = CryptoDataCollector()
     dm.db_manager.get_historical_dataframe()
 
+def dbmigrate():
+    # Replace these with your actual MongoDB connection URIs
+    SOURCE_URI = "mongodb://localhost:27017/"
+    DEST_URI = "mongodb://localhost:27017/"
+    
+    # Your database and collection names
+    SOURCE_DB = "crypto_db"
+    DEST_DB = "AIAggregator"
+    SOURCE_COLLECTION = "coins"
+    DEST_COLLECTION = "Crypto"
+    
+    pipeline = CryptoDataPipeline()
+    pipeline.copy_collection_to_new_db(
+        SOURCE_URI,
+        DEST_URI,
+        SOURCE_DB,
+        DEST_DB,
+        SOURCE_COLLECTION,
+        DEST_COLLECTION
+    )
+
 if __name__ == "__main__":
     main()
-    #test()
+    # test()
+    # dbmigrate()

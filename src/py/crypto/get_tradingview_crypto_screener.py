@@ -403,6 +403,23 @@ def scroll_table_old(driver, table_element):
         print(f"Error during table scrolling: {str(e)}")
         return 0
         
+def split_ticker_coin(value):
+    """
+    Split combined TickerCoin field into ticker and coin name.
+    Example: 'XRPXRP' -> ('XRP', 'Xrp')
+    """
+    if not value:
+        return '', ''
+        
+    # Find where the second part begins (first lowercase letter after uppercase)
+    for i in range(1, len(value)):
+        if value[i].isupper() and value[i-1].isupper():
+            continue
+        if value[i].isupper():
+            return value[:i], value[i:]
+    
+    return value, value  # fallback if pattern not found
+
 def extract_table_data(table, driver):
     """Extract data from the table regardless of its structure"""
     
@@ -447,50 +464,28 @@ def extract_table_data(table, driver):
         result = driver.execute_script(js_extract_script, table)
         
         if result and 'rows' in result and result['rows']:
-            return pd.DataFrame(result['rows'])
+            df = pd.DataFrame(result['rows'])
+            
+            # If TickerCoin column exists, split it into Ticker and Coin columns
+            if 'TickerCoin' in df.columns:
+                # Apply the split_ticker_coin function to TickerCoin column
+                split_result = df['TickerCoin'].apply(split_ticker_coin)
+                
+                # Create new columns from the split results
+                df['Ticker'] = split_result.apply(lambda x: x[0])
+                df['Coin'] = split_result.apply(lambda x: x[1])
+                
+                # Drop the original TickerCoin column
+                df = df.drop('TickerCoin', axis=1)
+                
+                # Reorder columns to put Ticker and Coin first
+                cols = df.columns.tolist()
+                cols = ['Ticker', 'Coin'] + [col for col in cols if col not in ['Ticker', 'Coin']]
+                df = df[cols]
+            
+            return df
         
-        # Fallback: Manual extraction if JavaScript method fails
-        rows = []
-        for row in table.find_elements(By.CSS_SELECTOR, 'tr, [role="row"]'):
-            if not row.find_elements(By.CSS_SELECTOR, 'th, [role="columnheader"]'):  # Skip header rows
-                cells = row.find_elements(By.CSS_SELECTOR, 'td, [role="gridcell"]')
-                row_data = {
-                    'Symbol': '',
-                    'Name': '',
-                    'Price': '',
-                    'Change_24h': '',
-                    'Market_Cap': '',
-                    'Volume': '',
-                    'Category': ''
-                }
-                
-                try:
-                    # Extract symbol and name
-                    name_element = row.find_element(By.CSS_SELECTOR, 'a[title]')
-                    if name_element:
-                        symbol_text = name_element.get_attribute('title')
-                        row_data['Symbol'] = symbol_text.split(' − ')[0] if ' − ' in symbol_text else symbol_text
-                        row_data['Name'] = symbol_text.split(' − ')[1] if ' − ' in symbol_text else ''
-                except:
-                    pass
-                
-                # Extract other fields
-                for i, cell in enumerate(cells):
-                    text = cell.text.strip()
-                    if i == 2:  # Price
-                        row_data['Price'] = text.split()[0] if text else ''
-                    elif i == 3:  # Change
-                        row_data['Change_24h'] = text
-                    elif i == 4:  # Market Cap
-                        row_data['Market_Cap'] = text.split()[0] if text else ''
-                    elif i == 5:  # Volume
-                        row_data['Volume'] = text.split()[0] if text else ''
-                    elif i == 7:  # Category
-                        row_data['Category'] = text
-                
-                rows.append(row_data)
-        
-        return pd.DataFrame(rows)
+        return None
         
     except Exception as e:
         print(f"Error extracting table data: {str(e)}")
@@ -542,9 +537,10 @@ def scrape_tradingview_crypto():
                 scrollable_element = table
                 try:
                     # Try to find a more specific scrollable container
-                    container = driver.find_element(By.CSS_SELECTOR, 'div[data-role="grid"] .table-wrapper')
-                    if container:
-                        scrollable_element = container
+                    # container = driver.find_element(By.CSS_SELECTOR, 'div[data-role="grid"] .table-wrapper')
+                    # if container:
+                    #     scrollable_element = container
+                    pass
                 except:
                     pass  # Use the table element if no specific container found
                 
@@ -587,17 +583,210 @@ def save_to_mongodb(df, client):
     except Exception as e:
         print(f"Error saving to MongoDB: {str(e)}")
 
+from pymongo import MongoClient, UpdateOne
+from datetime import datetime
+from functools import lru_cache
+
+class TradingViewUtils:
+    def __init__(self, db_name="AIAggregator", collection_name="Crypto"):
+        self.db_name = db_name
+        self.collection_name = collection_name
+        self.symbol_to_coin = None
+        self._init_coin_mappings()
+    
+    def _init_coin_mappings(self):
+        """Initialize coin mappings from MongoDB"""
+        try:
+            client = MongoClient('mongodb://localhost:27017/')
+            db = client[self.db_name]
+            collection = db[self.collection_name]
+            
+            # Get all existing coins from MongoDB
+            existing_coins = {doc['coin_id']: doc.get('symbol', '').lower() 
+                            for doc in collection.find({}, {'coin_id': 1, 'symbol': 1})}
+            
+            # Create reverse mapping from symbol to coin_id
+            self.symbol_to_coin = {}
+            for coin_id, symbol in existing_coins.items():
+                if symbol:  # Only add if symbol exists
+                    symbol = symbol.lower()
+                    # Handle cases where multiple coins might have same symbol
+                    if symbol in self.symbol_to_coin:
+                        if not isinstance(self.symbol_to_coin[symbol], list):
+                            self.symbol_to_coin[symbol] = [self.symbol_to_coin[symbol]]
+                        self.symbol_to_coin[symbol].append(coin_id)
+                    else:
+                        self.symbol_to_coin[symbol] = coin_id
+                        
+            print(f"Initialized mappings for {len(existing_coins)} coins")
+            
+        except Exception as e:
+            print(f"Error initializing coin mappings: {str(e)}")
+            raise
+        finally:
+            if 'client' in locals():
+                client.close()
+    
+    def get_coin_id(self, ticker):
+        """Get coin_id for a given ticker symbol"""
+        if not ticker:
+            return None
+            
+        ticker = ticker.lower()
+        coin_id = self.symbol_to_coin.get(ticker)
+        
+        # Handle case where we have multiple possible matches
+        if isinstance(coin_id, list):
+            return coin_id[0]  # For now, just take the first match
+            
+        return coin_id
+    
+    def save_tradingview_to_mongodb(self, data):
+        """
+        Save TradingView data to MongoDB, matching existing documents by coin_id.
+        Data from each tab will be stored under stats.tradingview.{tab_name}
+        """
+        try:
+            client = MongoClient('mongodb://localhost:27017/')
+            db = client[self.db_name]
+            collection = db[self.collection_name]
+            
+            # Prepare bulk operations
+            bulk_operations = []
+            processed_count = 0
+            skipped_count = 0
+            
+            # Process each tab's data
+            for tab_name, df in data.items():
+                if df is not None and not df.empty:
+                    records = df.to_dict('records')
+                    
+                    for record in records:
+                        # Get ticker from record
+                        ticker = record.get('Ticker', '').lower()
+                        if not ticker:
+                            continue
+                        
+                        # Find matching coin_id using our cached mapping
+                        coin_id = self.get_coin_id(ticker)
+                        
+                        if not coin_id:
+                            skipped_count += 1
+                            continue
+                            
+                        # Create nested structure for this tab
+                        tab_data = {}
+                        
+                        # Process all fields
+                        for field, value in record.items():
+                            if isinstance(value, str):
+                                # Handle percentage values
+                                if '%' in value:
+                                    clean_value = float(value.replace(',', '').replace('%', '').strip())
+                                # Handle currency values
+                                elif 'USD' in value:
+                                    clean_value = _convert_to_number(value.replace('\u202f', '').replace('USD', '').strip())
+                                # Handle numerical values with K/M/B/T
+                                elif any(suffix in value for suffix in 'KMBTkmbt'):
+                                    clean_value = _convert_to_number(value)
+                                else:
+                                    clean_value = value.strip()
+                            else:
+                                clean_value = value
+                            
+                            # Convert field name
+                            field_name = field
+                            if '|' in field_name:
+                                base, interval = field_name.split('|')
+                                if interval.startswith('Interval'):
+                                    interval = interval.replace('Interval', '')
+                                    field_name = f"{base}_{interval}"
+                            
+                            field_name = field_name.lower().replace(' ', '_')
+                            tab_data[field_name] = clean_value
+                        
+                        # Add updated timestamp for this tab
+                        tab_data['updated_at'] = datetime.now()
+                        
+                        # Create the update operation with nested structure
+                        update_operation = UpdateOne(
+                            {'coin_id': coin_id},  # Match by coin_id instead of symbol
+                            {
+                                '$set': {
+                                    f'stats.tradingview.{tab_name.lower().replace(" ", "_")}': tab_data,
+                                    'updated_at': datetime.now()
+                                }
+                            }
+                        )
+                        
+                        bulk_operations.append(update_operation)
+                        processed_count += 1
+                        
+                        # Execute in batches of 1000
+                        if len(bulk_operations) >= 1000:
+                            collection.bulk_write(bulk_operations)
+                            print(f"Processed batch of {len(bulk_operations)} operations")
+                            bulk_operations = []
+            
+            # Execute any remaining operations
+            if bulk_operations:
+                collection.bulk_write(bulk_operations)
+                print(f"Processed final batch of {len(bulk_operations)} operations")
+                
+            print(f"Total records processed: {processed_count}")
+            print(f"Total records skipped (no matching coin_id): {skipped_count}")
+                
+        except Exception as e:
+            print(f"Error saving to MongoDB: {str(e)}")
+            raise
+        finally:
+            if 'client' in locals():
+                client.close()
+
+def _convert_to_number(value):
+    """Convert string numbers with K/M/B/T suffixes to actual numbers"""
+    try:
+        if isinstance(value, (int, float)):
+            return float(value)
+            
+        value = value.replace('$', '').replace(',', '').strip()
+        
+        # Handle suffixes (case insensitive)
+        multipliers = {
+            'K': 1_000,
+            'M': 1_000_000,
+            'B': 1_000_000_000,
+            'T': 1_000_000_000_000
+        }
+        
+        # Check for both uppercase and lowercase suffixes
+        value_upper = value.upper()
+        for suffix, multiplier in multipliers.items():
+            if value_upper.endswith(suffix):
+                number = float(value[:-1])
+                return number * multiplier
+                
+        return float(value)
+    except:
+        return 0.0
 if __name__ == "__main__":
     try:
         data = scrape_tradingview_crypto()
         
-        # Save each tab's data to a separate CSV file
+        # Save both to CSV and MongoDB
         for tab_name, df in data.items():
             if df is not None and not df.empty:
+                # Save to CSV
                 csv_filename = f"{tab_name.replace(' ', '_')}_tradingview_crypto.csv"
                 df.to_csv(csv_filename, index=False)
                 print(f"Saved data for tab '{tab_name}' to {csv_filename}")
         
+        # Save to MongoDB
+        # Initialize once
+        tv_utils = TradingViewUtils()
+        tv_utils.save_tradingview_to_mongodb(data)
+        print("Saved TradingView data to MongoDB")
+            
         # if data is not None:
         #     print("\nSample of scraped data:")
         #     print(data.head())
