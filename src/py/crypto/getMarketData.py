@@ -801,6 +801,7 @@ class CryptoDataPipeline:
         # Setup options
         self.load_or_fetch_initial_data = False
         self.collect_daily_hist_data = False
+        self.must_Fetch=False
         self.save_categories=False
         self.save_category_ranks=False
         self.fix_categories=False
@@ -822,7 +823,8 @@ class CryptoDataPipeline:
     def initial_load(self,
                      save_categories=False,
                      save_category_ranks=False,
-                     fix_categories=False
+                     fix_categories=False,
+                     must_Fetch=False
                      ):
         """Initial data load and setup"""
         try:
@@ -834,7 +836,7 @@ class CryptoDataPipeline:
                 retries = 3
                 while retries > 0:
                     try:
-                        self.collector.load_or_fetch_initial_data()
+                        self.collector.load_or_fetch_initial_data(must_fetch=must_Fetch)
                         break
                     except Exception as e:
                         retries -= 1
@@ -953,6 +955,7 @@ class CryptoDataPipeline:
         try:
             # Initial setup and data load
             self.initial_load(
+                must_Fetch=self.must_Fetch,
                 save_categories=self.save_categories,
                 save_category_ranks=self.save_category_ranks,
                 fix_categories=self.fix_categories
@@ -1036,14 +1039,17 @@ def main():
     pipeline = CryptoDataPipeline()
 
     # Set pipeline options
+    pipeline.must_Fetch=False
     pipeline.load_or_fetch_initial_data = False
     pipeline.save_categories=False
-    pipeline.collect_daily_hist_data= False
     pipeline.save_category_ranks=False
-    pipeline.fix_categories=False
+
+    pipeline.fix_categories=True
+
+    pipeline.collect_daily_hist_data=False
     pipeline.start_scheduler=False
     
-    pipeline.will_daily_update=True
+    pipeline.will_daily_update=False
 
     #pipeline.db_manager.rename_field("coins", "current_stats", "stats")
 
@@ -1077,4 +1083,4 @@ def dbmigrate():
 if __name__ == "__main__":
     main()
     # test()
-    # dbmigrate()
+    #dbmigrate()
