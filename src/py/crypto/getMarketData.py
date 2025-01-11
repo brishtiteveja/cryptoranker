@@ -163,8 +163,111 @@ class CryptoDataManager:
             logging.error(f"Error in fix_missing_categories: {str(e)}")
             raise
     
-    
-    
+    def calculate_performance_metrics(self):
+        """
+        Calculate performance metrics for all cryptocurrencies and update their stats:
+        - 24h price change and rank change
+        - 7d price change and rank change
+        - Weekly price change and rank change (Monday to Monday)
+        - Monthly price change and rank change
+        """
+        try:
+            # Get current time
+            now = datetime.now()
+            
+            # Define time periods for calculations
+            periods = {
+                '24h': now - timedelta(days=1),
+                '7d': now - timedelta(days=7),
+                'weekly': now - timedelta(weeks=1),
+                'monthly': now - timedelta(days=30)
+            }
+            
+            # Get all coins
+            coins = self.db.coins.find({}, {'coin_id': 1})
+            
+            for id, coin in enumerate(coins):
+                coin_id = coin['coin_id']
+                performance_changes = {}
+                rank_changes = {}
+                logging.info(f"{id}. Calculating performance and rank change metrics for {coin_id}")
+                print(f"{id}. Calculating performance and rank change metrics for {coin_id}")
+                
+                for period_name, start_time in periods.items():
+                    try:
+                        # Get current price and historical price
+                        current_data = self.db.historical_data.find_one(
+                            {
+                                'coin_id': coin_id,
+                                'timestamp': {'$lte': now}
+                            },
+                            sort=[('timestamp', -1)]
+                        )
+                        
+                        historical_data = self.db.historical_data.find_one(
+                            {
+                                'coin_id': coin_id,
+                                'timestamp': {'$lte': start_time}
+                            },
+                            sort=[('timestamp', -1)]
+                        )
+                        
+                        if current_data and historical_data:
+                            # Calculate price change
+                            current_price = current_data['stats']['price']
+                            historical_price = historical_data['stats']['price']
+                            
+                            if historical_price != 0:  # Avoid division by zero
+                                price_change = ((current_price - historical_price) / historical_price) * 100
+                            else:
+                                price_change = 0
+                                
+                            performance_changes[f'performance_{period_name}'] = round(price_change, 2)
+                            
+                            # Calculate rank change by market cap
+                            current_market_cap = current_data['stats']['market_cap']
+                            historical_market_cap = historical_data['stats']['market_cap']
+                            
+                            # Get historical rank
+                            historical_rank = self.db.historical_data.count_documents({
+                                'timestamp': historical_data['timestamp'],
+                                'stats.market_cap': {'$gt': historical_market_cap}
+                            }) + 1
+                            
+                            # Get current rank
+                            current_rank = self.db.historical_data.count_documents({
+                                'timestamp': current_data['timestamp'],
+                                'stats.market_cap': {'$gt': current_market_cap}
+                            }) + 1
+                            
+                            rank_change = historical_rank - current_rank
+                            rank_changes[f'rank_{period_name}'] = rank_change
+                            
+                    except Exception as e:
+                        logging.error(f"Error calculating {period_name} metrics for {coin_id}: {str(e)}")
+                        continue
+                
+                # Update coin document with new metrics
+                if performance_changes or rank_changes:
+                    self.db.coins.update_one(
+                        {'coin_id': coin_id},
+                        {
+                            '$set': {
+                                'stats.change': {
+                                    **performance_changes,
+                                    **rank_changes
+                                },
+                                'updated_at': now
+                            }
+                        }
+                    )
+                    
+                logging.info(f"Updated performance metrics for {coin_id}")
+                
+        except Exception as e:
+            logging.error(f"Error in calculate_performance_metrics: {str(e)}")
+            raise
+
     def save_coin_metadata(self, coin_data, category_map):
         """Save coin metadata with categories"""
         # Get categories from category map if available
@@ -863,6 +966,16 @@ class CryptoDataPipeline:
             logging.error(f"Error in initial load: {str(e)}")
             raise
 
+    def update_performance_metrics(self):
+        """Update performance metrics for all cryptocurrencies"""
+        try:
+            logging.info("Starting performance metrics update")
+            self.db_manager.calculate_performance_metrics()
+            logging.info("Completed performance metrics update")
+        except Exception as e:
+            logging.error(f"Error updating performance metrics: {str(e)}")
+            raise
+        
     def daily_update(self):
         """Daily update job with per-coin backfill functionality"""
         try:
@@ -1044,12 +1157,14 @@ def main():
     pipeline.save_categories=False
     pipeline.save_category_ranks=False
 
-    pipeline.fix_categories=True
+    pipeline.fix_categories=False
 
     pipeline.collect_daily_hist_data=False
     pipeline.start_scheduler=False
     
     pipeline.will_daily_update=False
+
+    pipeline.update_performance_metrics()
 
     #pipeline.db_manager.rename_field("coins", "current_stats", "stats")
 
