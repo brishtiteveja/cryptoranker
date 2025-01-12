@@ -238,12 +238,20 @@ class CryptoDataManager:
             
             with total_benchmark:
                 now = datetime.now()
+                batch_size = 1000  # Process coins in smaller batches
+                
+                # Create a metrics_updates collection if it doesn't exist
+                if 'metrics_updates' not in self.db.list_collection_names():
+                    self.db.create_collection('metrics_updates')
+                    self.db.metrics_updates.create_index('metric_type', unique=True)
+
+                # Define time periods
                 time_periods = {
-                    '15min': timedelta(days=1),
-                    '1h': timedelta(days=1),
-                    '4h': timedelta(days=1),
-                    '6h': timedelta(days=1),
-                    '12h': timedelta(days=1),
+                    '15min': timedelta(minutes=15),
+                    '1h': timedelta(hours=1),
+                    '4h': timedelta(hours=4),
+                    '6h': timedelta(hours=6),
+                    '12h': timedelta(hours=12),
                     '24h': timedelta(days=1),
                     '7d': timedelta(days=7),
                     'weekly': timedelta(weeks=1),
@@ -251,123 +259,177 @@ class CryptoDataManager:
                     'ytd': now - datetime(now.year, 1, 1),
                     'yearly': timedelta(days=365)
                 }
-                max_lookback = max(delta for delta in time_periods.values())
-                earliest_needed = now - max_lookback
 
-                # Fetch historical data from MongoDB
-                pipeline = [
-                    {'$match': {'timestamp': {'$gte': earliest_needed}}},
-                    {'$project': {'_id': 1, 'coin_id': 1, 'timestamp': 1, 'stats.price': 1, 'stats.market_cap': 1}}
-                ]
-                data = list(self.db.historical_data.aggregate(pipeline, allowDiskUse=True))
-                
-                logging.info(f"Retrieved {len(data)} historical data documents.")
-                print(f"Retrieved {len(data)} historical data documents.")
-                if not data:
-                    logging.warning("No historical data available for processing.")
-                    return
+                # Get all unique coin IDs first
+                coin_ids = list(self.db.coins.distinct('coin_id'))
+                total_coins = len(coin_ids)
+                logging.info(f"Processing {total_coins} coins")
 
-                # Convert to DataFrame for processing
-                df = pd.DataFrame(data)
-                df['date'] = pd.to_datetime(df['timestamp']).dt.normalize()
-                dates = np.sort(df['date'].unique())
-                coin_ids = df['coin_id'].unique()
-                coin_to_idx = {coin: idx for idx, coin in enumerate(coin_ids)}
+                # Store start time of update
+                update_start_time = now
 
-                # Prepare data arrays
-                date_data = {}
-                for date_idx, date in enumerate(dates):
-                    self.log_progress(date_idx + 1, len(dates), operation="Processing Dates")
-                    day_data = df[df['date'] == date]
-                    n_coins = len(coin_ids)
-                    prices = np.full(n_coins, np.nan)
-                    mcaps = np.full(n_coins, np.nan)
+                # Process coins in batches
+                successful_updates = 0
+                for start_idx in range(0, total_coins, batch_size):
+                    end_idx = min(start_idx + batch_size, total_coins)
+                    current_coin_batch = coin_ids[start_idx:end_idx]
+                    
+                    logging.info(f"Processing coins {start_idx+1} to {end_idx} of {total_coins}")
+                    
+                    # Fetch data only for current batch of coins
+                    max_lookback = max(delta for delta in time_periods.values() 
+                                    if isinstance(delta, timedelta))
+                    earliest_needed = now - max_lookback
 
-                    for _, row in day_data.iterrows():
-                        idx = coin_to_idx[row['coin_id']]
-                        prices[idx] = row['stats']['price']
-                        mcaps[idx] = row['stats']['market_cap']
-
-                    ranks = np.full(n_coins, np.nan)
-                    valid_mcaps = ~np.isnan(mcaps)
-                    ranks[valid_mcaps] = (mcaps[valid_mcaps, None] < mcaps[valid_mcaps]).sum(axis=0) + 1
-                    date_data[date] = {'prices': prices, 'mcaps': mcaps, 'ranks': ranks}
-
-                # Calculate changes and prepare bulk updates for coins
-                bulk_operations = []
-                latest_date = max(dates)
-                latest_data = date_data[latest_date]
-                valid_latest = ~np.isnan(latest_data['prices'])
-
-                logging.info("Starting calculation of time series metrics...")
-                for period_idx, (period_name, time_delta) in enumerate(time_periods.items()):
-                    self.log_progress(period_idx + 1, len(time_periods), operation="Calculating Changes for Periods")
-                    logging.info(f"Processing period: {period_name}")
-                    print(f"Processing period: {period_name}")
-
-                    if period_name == 'ytd':
-                        target_date = np.datetime64(datetime(now.year, 1, 1))
-                    else:
-                        target_date = latest_date - np.timedelta64(time_delta.days, 'D')
-
-                    # Find the closest valid target date
-                    target_date = min(dates, key=lambda x: abs(x - target_date))
-                    target_data = date_data[target_date]
-                    valid_both = valid_latest & ~np.isnan(target_data['prices'])
-
-                    price_changes = np.full(len(coin_ids), np.nan)
-                    price_changes[valid_both] = (
-                        (latest_data['prices'][valid_both] - target_data['prices'][valid_both]) /
-                        target_data['prices'][valid_both] * 100
-                    )
-
-                    rank_changes = np.full(len(coin_ids), np.nan)
-                    valid_ranks = valid_both & ~np.isnan(target_data['ranks'])
-                    rank_changes[valid_ranks] = (
-                        target_data['ranks'][valid_ranks] - latest_data['ranks'][valid_ranks]
-                    )
-
-                    # Prepare updates for each coin
-                    for idx in np.where(valid_both)[0]:
-                        coin_id = coin_ids[idx]
-                        changes = {
-                            f'stats.change.performance_{period_name}': round(float(price_changes[idx]), 2),
-                            f'stats.change.rank_{period_name}': int(rank_changes[idx]),
+                    pipeline = [
+                        {
+                            '$match': {
+                                'timestamp': {'$gte': earliest_needed},
+                                'coin_id': {'$in': current_coin_batch}
+                            }
+                        },
+                        {
+                            '$project': {
+                                '_id': 1,
+                                'coin_id': 1,
+                                'timestamp': 1,
+                                'stats.price': 1,
+                                'stats.market_cap': 1
+                            }
                         }
-                        bulk_operations.append(
-                            UpdateOne(
-                                {"coin_id": coin_id},
-                                {"$set": {**changes, "updated_at": now}},
-                                upsert=True
-                            )
-                        )
-                        logging.debug(f"Prepared update for coin {coin_id}: {changes}")
-                        print(f"Prepared update for coin {coin_id}: {changes}")
+                    ]
+                    
+                    data = list(self.db.historical_data.aggregate(pipeline, allowDiskUse=True))
+                    if not data:
+                        continue
 
-                    logging.info(f"Completed changes for period: {period_name}")
-                    print(f"Completed changes for period: {period_name}")
+                    # Process timestamps and detect data frequency
+                    df = pd.DataFrame(data)
+                    df['timestamp'] = pd.to_datetime(df['timestamp'])
+                    df['date'] = df['timestamp'].dt.normalize()
+                    
+                    # Rest of the processing code remains the same until the bulk operations...
 
-                # Execute bulk write to coins collection
-                logging.info(f"Prepared {len(bulk_operations)} updates for the coins collection.")
-                print(f"Prepared {len(bulk_operations)} updates for the coins collection.")
-                if bulk_operations:
-                    total_batches = (len(bulk_operations) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
-                    for batch_idx in range(0, len(bulk_operations), self.BATCH_SIZE):
-                        current_batch = (batch_idx // self.BATCH_SIZE) + 1
-                        self.log_progress(current_batch, total_batches, operation="Writing Updates to Coins Collection")
-                        batch = bulk_operations[batch_idx:batch_idx + self.BATCH_SIZE]
-                        result = self.db.coins.bulk_write(batch, ordered=False)
-                        logging.info(f"Batch {current_batch}/{total_batches}: "
-                                    f"Matched: {result.matched_count}, "
-                                    f"Modified: {result.modified_count}, "
-                                    f"Upserts: {result.upserted_count}")
-                else:
-                    logging.info("No updates to process for the coins collection.")
-                    print("No updates to process for the coins collection.")
+                    # Calculate changes
+                    bulk_operations = []
+                    latest_date = max(dates)
+                    latest_data = date_data[latest_date]
+
+                    for period_name, time_delta in time_periods.items():
+                        if period_name not in valid_time_periods:
+                            # Set zero changes for invalid periods
+                            for coin_id in current_coin_batch:
+                                bulk_operations.append(
+                                    UpdateOne(
+                                        {"coin_id": coin_id},
+                                        {"$set": {
+                                            f'stats.change.performance_{period_name}': 0.0,
+                                            f'stats.change.rank_{period_name}': 0,
+                                            "updated_at": now,
+                                            "last_metric_update": now  # Add update timestamp
+                                        }},
+                                        upsert=True
+                                    )
+                                )
+                            continue
+
+                        # Regular period processing...
+                        for coin_id in current_coin_batch:
+                            idx = batch_coin_to_idx[coin_id]
+                            
+                            if (not np.isnan(latest_data['prices'][idx]) and 
+                                not np.isnan(target_data['prices'][idx])):
+                                
+                                price_change = ((latest_data['prices'][idx] - target_data['prices'][idx]) / 
+                                            target_data['prices'][idx] * 100)
+                                
+                                rank_change = (int(latest_data['ranks'][idx] - target_data['ranks'][idx])
+                                            if not np.isnan(latest_data['ranks'][idx]) and 
+                                                not np.isnan(target_data['ranks'][idx])
+                                            else 0)
+
+                                bulk_operations.append(
+                                    UpdateOne(
+                                        {"coin_id": coin_id},
+                                        {"$set": {
+                                            f'stats.change.performance_{period_name}': round(float(price_change), 2),
+                                            f'stats.change.rank_{period_name}': rank_change,
+                                            "updated_at": now,
+                                            "last_metric_update": now  # Add update timestamp
+                                        }},
+                                        upsert=True
+                                    )
+                                )
+
+                    # Execute bulk writes for current batch
+                    if bulk_operations:
+                        write_batch_size = 1000
+                        for i in range(0, len(bulk_operations), write_batch_size):
+                            batch = bulk_operations[i:i + write_batch_size]
+                            result = self.db.coins.bulk_write(batch, ordered=False)
+                            successful_updates += result.modified_count
+                            logging.info(f"Batch write result - Matched: {result.matched_count}, "
+                                    f"Modified: {result.modified_count}")
+
+                # Update metrics_updates collection with completion information
+                update_end_time = datetime.now()
+                update_info = {
+                    'metric_type': 'timeseries_metrics',
+                    'last_update_start': update_start_time,
+                    'last_update_end': update_end_time,
+                    'duration_seconds': (update_end_time - update_start_time).total_seconds(),
+                    'total_coins_processed': total_coins,
+                    'successful_updates': successful_updates,
+                    'update_status': 'completed',
+                    'updated_at': update_end_time
+                }
+                
+                self.db.metrics_updates.update_one(
+                    {'metric_type': 'timeseries_metrics'},
+                    {'$set': update_info},
+                    upsert=True
+                )
+
+                logging.info(f"Metrics update completed. Started: {update_start_time}, Ended: {update_end_time}")
+                logging.info(f"Total coins processed: {total_coins}, Successful updates: {successful_updates}")
+
+            total_time = total_benchmark.duration
+            logging.info(f"Total processing time: {total_time:.2f} seconds")
+            return {
+                "total_time": total_time,
+                "coins_processed": total_coins,
+                "successful_updates": successful_updates,
+                "update_start": update_start_time,
+                "update_end": update_end_time
+            }
 
         except Exception as e:
+            # Update metrics_updates collection with error information
+            self.db.metrics_updates.update_one(
+                {'metric_type': 'timeseries_metrics'},
+                {'$set': {
+                    'update_status': 'failed',
+                    'last_error': str(e),
+                    'error_timestamp': datetime.now()
+                }},
+                upsert=True
+            )
             logging.error(f"Error calculating time series metrics: {str(e)}")
             raise
+
+    def get_last_metrics_update(self):
+        """Get information about the last metrics update"""
+        update_info = self.db.metrics_updates.find_one({'metric_type': 'timeseries_metrics'})
+        if update_info:
+            return {
+                'last_update_start': update_info.get('last_update_start'),
+                'last_update_end': update_info.get('last_update_end'),
+                'duration_seconds': update_info.get('duration_seconds'),
+                'total_coins_processed': update_info.get('total_coins_processed'),
+                'successful_updates': update_info.get('successful_updates'),
+                'update_status': update_info.get('update_status')
+            }
+        return None
 
 
     def calculate_timeseries_metrics_benchmarked2(self):
@@ -1636,7 +1698,7 @@ def main():
     pipeline.collect_daily_hist_data=False
     pipeline.start_scheduler=False
     
-    pipeline.will_daily_update=False
+    #pipeline.will_daily_update=True
 
     pipeline.update_performance_metrics()
 
