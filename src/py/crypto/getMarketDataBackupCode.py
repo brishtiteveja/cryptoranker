@@ -230,8 +230,16 @@ class CryptoDataManager:
         except Exception as e:
             logging.error(f"Error in fix_missing_categories: {str(e)}")
             raise
-    
+
     def calculate_timeseries_metrics_benchmarked(self):
+        """
+        Calculate and update time series metrics for all cryptocurrencies.
+        Handles batching, error recovery, and provides detailed benchmarking.
+        """
+        # Create indexes for performance
+        self.db.historical_data.create_index([("stats.market_cap", -1)])
+        self.db.historical_data.create_index([("timestamp", -1)])
+        
         try:
             benchmarks = {}
             total_benchmark = Benchmark("Total Processing")
@@ -239,126 +247,16 @@ class CryptoDataManager:
             with total_benchmark:
                 now = datetime.now()
                 batch_size = 1000
-
-                # Global and category rank calculation
-                global_rank_benchmark = Benchmark("Global and Category Rank Calculation")
-                with global_rank_benchmark:
-                    logging.info("Starting global and category rank calculation...")
-                    
-                    # Get global market cap rankings
-                    global_market_caps = list(self.db.historical_data.aggregate([
-                        {
-                            '$match': {
-                                'timestamp': {'$lte': now},
-                                'stats.market_cap': {'$exists': True, '$gt': 0}
-                            }
-                        },
-                        {
-                            '$sort': {'timestamp': -1}
-                        },
-                        {
-                            '$group': {
-                                '_id': '$coin_id',
-                                'market_cap': {'$first': '$stats.market_cap'}
-                            }
-                        },
-                        {
-                            '$sort': {'market_cap': -1}
-                        }
-                    ]))
-                    logging.info(f"Global market cap rankings calculated for {len(global_market_caps)} coins.")
-
-                    # Map global ranks to coin IDs
-                    global_rank_map = {doc['_id']: idx + 1 for idx, doc in enumerate(global_market_caps)}
-
-                    # Get category-based rankings
-                    category_ranks = {}
-                    categories = list(self.db.categories.find({}, {'_id': 0, 'name': 1, 'coins': 1}))
-                    logging.info(f"Fetched {len(categories)} categories for rank calculations.")
-
-                    for i, category in enumerate(categories, start=1):
-                        if 'coins' not in category or not isinstance(category['coins'], list):
-                            logging.warning(f"Skipping category '{category.get('name', 'Unknown')}' due to missing or invalid 'coins' field.")
-                            continue
-                        
-                        category_name = category['name']
-                        category_coins = category['coins']
-                        logging.info(f"Processing category {i}/{len(categories)}: {category_name} with {len(category_coins)} coins.")
-
-                        # Aggregate and sort by market cap within the category
-                        ranked_coins = list(self.db.historical_data.aggregate([
-                            {
-                                '$match': {
-                                    'timestamp': {'$lte': now},
-                                    'coin_id': {'$in': category_coins},
-                                    'stats.market_cap': {'$exists': True, '$gt': 0}
-                                }
-                            },
-                            {
-                                '$sort': {'timestamp': -1}
-                            },
-                            {
-                                '$group': {
-                                    '_id': '$coin_id',
-                                    'market_cap': {'$first': '$stats.market_cap'}
-                                }
-                            },
-                            {
-                                '$sort': {'market_cap': -1}
-                            }
-                        ]))
-                        logging.info(f"Calculated rankings for category '{category_name}' with {len(ranked_coins)} coins.")
-
-                        # Map category ranks
-                        category_ranks[category_name] = {
-                            doc['_id']: idx + 1 for idx, doc in enumerate(ranked_coins)
-                        }
-
-                benchmarks['global_category_rank_calculation'] = global_rank_benchmark.duration
-
-                # Update global and category ranks in database
-                rank_update_benchmark = Benchmark("Rank Updates in Database")
-                with rank_update_benchmark:
-                    logging.info("Updating global and category ranks in the database...")
-                    bulk_operations = []
-                    for coin_id, global_rank in global_rank_map.items():
-                        rank_update = {
-                            'stats.rank': global_rank,
-                            'updated_at': now
-                        }
-
-                        # Add category ranks for the coin if applicable
-                        for category_name, ranks in category_ranks.items():
-                            if coin_id in ranks:
-                                rank_update[f'stats.category_ranks.{category_name}'] = ranks[coin_id]
-
-                        bulk_operations.append(
-                            UpdateOne(
-                                {'coin_id': coin_id},
-                                {'$set': rank_update},
-                                upsert=True
-                            )
-                        )
-                        # Log progress every 1000 operations
-                        if len(bulk_operations) % 1000 == 0:
-                            logging.info(f"Prepared {len(bulk_operations)} rank updates so far...")
-
-                    if bulk_operations:
-                        self.db.coins.bulk_write(bulk_operations, ordered=False)
-                        logging.info(f"Completed rank updates for {len(bulk_operations)} coins.")
-
-                benchmarks['rank_updates'] = rank_update_benchmark.duration
-
-                
                 
                 # Setup phase
                 setup_benchmark = Benchmark("Setup")
                 with setup_benchmark:
-                    # Create metrics_updates collection if it doesn't exist
+                    # Create metrics_updates collection if needed
                     if 'metrics_updates' not in self.db.list_collection_names():
                         self.db.create_collection('metrics_updates')
                         self.db.metrics_updates.create_index('metric_type', unique=True)
                     
+                    # Define time periods to analyze
                     time_periods = {
                         '15min': timedelta(minutes=15),
                         '1h': timedelta(hours=1),
@@ -367,7 +265,6 @@ class CryptoDataManager:
                         '12h': timedelta(hours=12),
                         '24h': timedelta(days=1),
                         '7d': timedelta(days=7),
-                        'weekly': timedelta(weeks=1),
                         'monthly': timedelta(days=30),
                         'ytd': now - datetime(now.year, 1, 1),
                         'yearly': timedelta(days=365)
@@ -380,12 +277,19 @@ class CryptoDataManager:
                 benchmarks['setup'] = setup_benchmark.duration
                 
                 successful_updates = 0
-                logging.info(f"Processing {total_coins} coins")
+                logging.info(f"Starting processing of {total_coins} coins")
                 
                 # Process coins in batches
                 for start_idx in range(0, total_coins, batch_size):
                     end_idx = min(start_idx + batch_size, total_coins)
                     current_coin_batch = coin_ids[start_idx:end_idx]
+                    
+                    # Log batch details
+                    batch_num = (start_idx // batch_size) + 1
+                    total_batches = (total_coins + batch_size - 1) // batch_size
+                    logging.info(f"\nProcessing Batch {batch_num}/{total_batches}")
+                    logging.info(f"Coins {start_idx+1} to {end_idx} of {total_coins}")
+                    logging.info(f"Sample coins in current batch: {', '.join(current_coin_batch[:5])}...")
                     
                     # MongoDB query phase
                     query_benchmark = Benchmark("MongoDB Query")
@@ -421,7 +325,12 @@ class CryptoDataManager:
                             batch.append(doc)
                             processed_docs += 1
                             if processed_docs % self.PROGRESS_INTERVAL == 0:
-                                self.log_progress(processed_docs, None, "Processing documents from MongoDB")
+                                sample_coins = set(doc['coin_id'] for doc in batch[:5])
+                                self.log_progress(
+                                    processed_docs, 
+                                    None, 
+                                    f"Processing MongoDB documents (Sample coins: {', '.join(sample_coins)})"
+                                )
                             if len(batch) >= self.BATCH_SIZE:
                                 data.extend(batch)
                                 batch = []
@@ -430,7 +339,253 @@ class CryptoDataManager:
                     benchmarks['mongodb_query'] = query_benchmark.duration
                     
                     if not data:
-                        logging.warning(f"No data found for batch {start_idx}-{end_idx}")
+                        logging.warning(f"No data found for batch {batch_num}/{total_batches} (coins {start_idx+1}-{end_idx})")
+                        continue
+                    
+                    # Data conversion phase
+                    conversion_benchmark = Benchmark("Data Conversion")
+                    with conversion_benchmark:
+                        df = pd.DataFrame(data)
+                        
+                        # Validate required columns
+                        required_columns = ['timestamp', 'coin_id', 'stats']
+                        missing_columns = [col for col in required_columns if col not in df.columns]
+                        if missing_columns:
+                            raise ValueError(f"Missing required columns: {missing_columns}")
+                        
+                        df['timestamp'] = pd.to_datetime(df['timestamp'])
+                        df['date'] = df['timestamp'].dt.normalize()
+                    benchmarks['data_conversion'] = conversion_benchmark.duration
+                    
+                    # Calculate global market cap ranks
+                    global_rank_benchmark = Benchmark("Global Rank Calculation")
+                    with global_rank_benchmark:
+                        global_market_caps = list(self.db.historical_data.aggregate([
+                            {
+                                '$match': {
+                                    'timestamp': {'$lte': now},
+                                    'stats.market_cap': {'$exists': True, '$gt': 0}
+                                }
+                            },
+                            {
+                                '$sort': {'timestamp': -1}
+                            },
+                            {
+                                '$group': {
+                                    '_id': '$coin_id',
+                                    'market_cap': {'$first': '$stats.market_cap'}
+                                }
+                            },
+                            {
+                                '$sort': {'market_cap': -1}
+                            }
+                        ]))
+
+                        # Create rank lookup dictionary
+                        global_rank_map = {doc['_id']: idx + 1 for idx, doc in enumerate(global_market_caps)}
+                    benchmarks['global_rank_calculation'] = global_rank_benchmark.duration
+                    
+                    # Performance and rank change calculation
+                    calc_benchmark = Benchmark("Performance and Rank Change Calculation")
+                    with calc_benchmark:
+                        bulk_operations = []
+                        
+                        for coin_id, global_rank in global_rank_map.items():
+                            performance_change = {}
+                            rank_change = {}
+
+                            for period_name, period_delta in time_periods.items():
+                                # Determine target date
+                                if period_name == 'ytd':
+                                    target_date = datetime(now.year, 1, 1)
+                                else:
+                                    target_date = now - period_delta
+
+                                # Fetch latest and historical data
+                                latest_data = self.db.historical_data.find_one(
+                                    {'coin_id': coin_id, 'timestamp': {'$lte': now}},
+                                    sort=[('timestamp', -1)],
+                                    projection={'stats.price': 1, 'stats.market_cap': 1, 'timestamp': 1}
+                                )
+                                historical_data = self.db.historical_data.find_one(
+                                    {'coin_id': coin_id, 'timestamp': {'$lte': target_date}},
+                                    sort=[('timestamp', -1)],
+                                    projection={'stats.price': 1, 'stats.market_cap': 1, 'timestamp': 1}
+                                )
+
+                                if not latest_data or not historical_data:
+                                    logging.warning(f"No data found for {period_name}: coin_id={coin_id}")
+                                    price_change = 0
+                                    rank_delta = 0
+                                else:
+                                    latest_price = latest_data['stats']['price']
+                                    historical_price = historical_data['stats']['price']
+                                    if historical_price and historical_price != 0:
+                                        price_change = ((latest_price - historical_price) / historical_price) * 100
+                                    else:
+                                        price_change = 0
+
+                                    rank_delta = global_rank - self.db.historical_data.count_documents({
+                                        'timestamp': {'$lte': historical_data['timestamp']},
+                                        'stats.market_cap': {'$gt': historical_data['stats']['market_cap']}
+                                    }) + 1
+
+                                performance_change[f'performance_{period_name}'] = round(price_change, 2)
+                                rank_change[f'rank_change_{period_name}'] = rank_delta
+
+                            bulk_operations.append(
+                                UpdateOne(
+                                    {"coin_id": coin_id},
+                                    {
+                                        "$set": {
+                                            "stats.change": {**performance_change, **rank_change},
+                                            "stats.rank": global_rank,
+                                            "updated_at": datetime.now()
+                                        }
+                                    },
+                                    upsert=True
+                                )
+                            )
+                    
+                        # Update MongoDB
+                        if bulk_operations:
+                            self.db.coins.bulk_write(bulk_operations, ordered=False)
+                    benchmarks['change_calculation'] = calc_benchmark.duration
+                
+                # Final metrics update
+                update_end_time = datetime.now()
+                self.db.metrics_updates.update_one(
+                    {'metric_type': 'timeseries_metrics'},
+                    {'$set': {
+                        'last_update_start': update_start_time,
+                        'last_update_end': update_end_time,
+                        'total_coins_processed': total_coins,
+                        'successful_updates': successful_updates,
+                        'update_status': 'completed',
+                        'benchmarks': benchmarks,
+                        'updated_at': update_end_time
+                    }},
+                    upsert=True
+                )
+                logging.info(f"Completed processing of {total_coins} coins in {total_benchmark.duration:.2f}s.")
+            
+        except Exception as e:
+            logging.error(f"Error calculating time series metrics: {str(e)}")
+            raise
+
+
+
+    
+    def calculate_timeseries_metrics_benchmarked2(self):
+        """
+        Calculate and update time series metrics for all cryptocurrencies.
+        Handles batching, error recovery, and provides detailed benchmarking.
+        """
+        # Create indexes for performance
+        self.db.historical_data.create_index([("stats.market_cap", -1)])
+        self.db.historical_data.create_index([("timestamp", -1)])
+        
+        try:
+            benchmarks = {}
+            total_benchmark = Benchmark("Total Processing")
+            
+            with total_benchmark:
+                now = datetime.now()
+                batch_size = 1000
+                
+                # Setup phase
+                setup_benchmark = Benchmark("Setup")
+                with setup_benchmark:
+                    # Create metrics_updates collection if needed
+                    if 'metrics_updates' not in self.db.list_collection_names():
+                        self.db.create_collection('metrics_updates')
+                        self.db.metrics_updates.create_index('metric_type', unique=True)
+                    
+                    # Define time periods to analyze
+                    time_periods = {
+                        '15min': timedelta(minutes=15),
+                        '1h': timedelta(hours=1),
+                        '4h': timedelta(hours=4),
+                        '6h': timedelta(hours=6),
+                        '12h': timedelta(hours=12),
+                        '24h': timedelta(days=1),
+                        '7d': timedelta(days=7),
+                        'weekly': timedelta(weeks=1),
+                        'monthly': timedelta(days=30),
+                        'ytd': now - datetime(now.year, 1, 1),
+                        'yearly': timedelta(days=365)
+                    }
+                    
+                    # Get all unique coin IDs
+                    coin_ids = list(self.db.coins.distinct('coin_id'))
+                    total_coins = len(coin_ids)
+                    update_start_time = now
+                benchmarks['setup'] = setup_benchmark.duration
+                
+                successful_updates = 0
+                logging.info(f"Starting processing of {total_coins} coins")
+                
+                # Process coins in batches
+                for start_idx in range(0, total_coins, batch_size):
+                    end_idx = min(start_idx + batch_size, total_coins)
+                    current_coin_batch = coin_ids[start_idx:end_idx]
+                    
+                    # Log batch details
+                    batch_num = (start_idx // batch_size) + 1
+                    total_batches = (total_coins + batch_size - 1) // batch_size
+                    logging.info(f"\nProcessing Batch {batch_num}/{total_batches}")
+                    logging.info(f"Coins {start_idx+1} to {end_idx} of {total_coins}")
+                    logging.info(f"Sample coins in current batch: {', '.join(current_coin_batch[:5])}...")
+                    
+                    # MongoDB query phase
+                    query_benchmark = Benchmark("MongoDB Query")
+                    with query_benchmark:
+                        max_lookback = max(delta for delta in time_periods.values() 
+                                        if isinstance(delta, timedelta))
+                        earliest_needed = now - max_lookback
+                        
+                        pipeline = [
+                            {
+                                '$match': {
+                                    'timestamp': {'$gte': earliest_needed},
+                                    'coin_id': {'$in': current_coin_batch}
+                                }
+                            },
+                            {
+                                '$project': {
+                                    '_id': 1,
+                                    'coin_id': 1,
+                                    'timestamp': 1,
+                                    'stats.price': 1,
+                                    'stats.market_cap': 1
+                                }
+                            }
+                        ]
+                        
+                        data = []
+                        cursor = self.db.historical_data.aggregate(pipeline, allowDiskUse=True)
+                        batch = []
+                        processed_docs = 0
+                        
+                        for doc in cursor:
+                            batch.append(doc)
+                            processed_docs += 1
+                            if processed_docs % self.PROGRESS_INTERVAL == 0:
+                                sample_coins = set(doc['coin_id'] for doc in batch[:5])
+                                self.log_progress(
+                                    processed_docs, 
+                                    None, 
+                                    f"Processing MongoDB documents (Sample coins: {', '.join(sample_coins)})"
+                                )
+                            if len(batch) >= self.BATCH_SIZE:
+                                data.extend(batch)
+                                batch = []
+                        if batch:
+                            data.extend(batch)
+                    benchmarks['mongodb_query'] = query_benchmark.duration
+                    
+                    if not data:
+                        logging.warning(f"No data found for batch {batch_num}/{total_batches} (coins {start_idx+1}-{end_idx})")
                         continue
                     
                     # Data conversion phase
@@ -454,6 +609,8 @@ class CryptoDataManager:
                             min(today_data['timestamp'].diff().dropna().dt.total_seconds() / 60)
                             if len(today_data) > 1 else 1440
                         )
+                        
+                        logging.info(f"Detected data frequency: {min_time_diff} minutes")
                     benchmarks['data_conversion'] = conversion_benchmark.duration
                     
                     # Filter valid time periods based on data frequency
@@ -467,6 +624,8 @@ class CryptoDataManager:
                         if period_minutes >= min_time_diff or period_name in ['24h', '7d', 'weekly', 'monthly', 'ytd', 'yearly']:
                             valid_time_periods[period_name] = delta
                     
+                    logging.info(f"Valid time periods: {', '.join(valid_time_periods.keys())}")
+                    
                     # Array creation phase
                     array_benchmark = Benchmark("Array Creation")
                     with array_benchmark:
@@ -475,9 +634,18 @@ class CryptoDataManager:
                         date_data = {}
                         
                         for date_idx, date in enumerate(dates):
-                            self.log_progress(date_idx + 1, len(dates), "Processing dates")
+                            processed_coins = set()
                             day_data = df[df['date'] == date]
                             n_batch_coins = len(current_coin_batch)
+                            
+                            # Log progress with sample of processed coins
+                            if date_idx % 10 == 0:  # Log every 10th date
+                                sample_coins = list(day_data['coin_id'].unique())[:5]
+                                logging.info(
+                                    f"Processing date {pd.Timestamp(date).strftime('%Y-%m-%d')} "
+                                    f"({date_idx + 1}/{len(dates)}) - "
+                                    f"Sample coins: {', '.join(sample_coins)}"
+                                )
                             
                             prices = np.full(n_batch_coins, np.nan)
                             mcaps = np.full(n_batch_coins, np.nan)
@@ -488,6 +656,7 @@ class CryptoDataManager:
                                     stats = row['stats']
                                     prices[idx] = stats.get('price')
                                     mcaps[idx] = stats.get('market_cap')
+                                    processed_coins.add(row['coin_id'])
                             
                             # Calculate ranks properly
                             valid_mcaps = ~np.isnan(mcaps)
@@ -503,6 +672,10 @@ class CryptoDataManager:
                                 'mcaps': mcaps,
                                 'ranks': ranks
                             }
+                            
+                            if date_idx % 10 == 0:  # Log processed coins count every 10th date
+                                logging.info(f"Processed {len(processed_coins)} coins for date {pd.Timestamp(date).strftime('%Y-%m-%d')}")
+                                
                     benchmarks['array_creation'] = array_benchmark.duration
                     
                     # Change calculation phase
@@ -512,16 +685,65 @@ class CryptoDataManager:
                         latest_date = max(dates)
                         latest_data = date_data[latest_date]
                         
+                        # Calculate global ranks based on market caps
+                        current_ranks = {}
+
+                        # Get global market cap data for ranking
+                        global_market_caps = list(self.db.historical_data.aggregate([
+                            {
+                                '$match': {
+                                    'timestamp': {'$lte': now},
+                                    'stats.market_cap': {'$exists': True, '$ne': None}
+                                }
+                            },
+                            {
+                                '$sort': {'timestamp': -1}
+                            },
+                            {
+                                '$group': {
+                                    '_id': '$coin_id',
+                                    'market_cap': {'$first': '$stats.market_cap'}
+                                }
+                            },
+                            {
+                                '$match': {
+                                    'market_cap': {'$gt': 0}
+                                }
+                            },
+                            {
+                                '$sort': {'market_cap': -1}
+                            }
+                        ]))
+
+                        # Create rank lookup dictionary
+                        market_cap_ranks = {doc['_id']: idx + 1 for idx, doc in enumerate(global_market_caps)}
+
+                        # Map global ranks to current batch coins
+                        for coin_id in current_coin_batch:
+                            current_ranks[coin_id] = market_cap_ranks.get(coin_id, 0)
+                        
+                        # Log current processing status
+                        coins_with_data = [coin_id for coin_id in current_coin_batch 
+                                        if not np.isnan(latest_data['prices'][batch_coin_to_idx[coin_id]])]
+                        logging.info(
+                            f"\nCalculating changes for {len(coins_with_data)} coins with valid data"
+                            f"\nSample coins: {', '.join(coins_with_data[:5])}"
+                        )
+                        
                         for period_name, time_delta in time_periods.items():
+                            logging.info(f"\nProcessing period: {period_name}")
+                            
                             if period_name not in valid_time_periods:
                                 # Set zero changes for invalid periods
                                 for coin_id in current_coin_batch:
+                                    current_rank = current_ranks.get(coin_id, 0)
                                     bulk_operations.append(
                                         UpdateOne(
                                             {"coin_id": coin_id},
                                             {"$set": {
                                                 f'stats.change.performance_{period_name}': 0.0,
                                                 f'stats.change.rank_{period_name}': 0,
+                                                "stats.rank": current_rank,
                                                 "updated_at": now,
                                                 "last_metric_update": now
                                             }},
@@ -538,14 +760,19 @@ class CryptoDataManager:
                             target_date = min(dates, key=lambda x: abs(x - target_date))
                             target_data = date_data[target_date]
                             
+                            processed_count = 0
                             for coin_id in current_coin_batch:
                                 idx = batch_coin_to_idx[coin_id]
+                                current_rank = current_ranks.get(coin_id, 0)
                                 
                                 if (not np.isnan(latest_data['prices'][idx]) and 
                                     not np.isnan(target_data['prices'][idx])):
                                     
-                                    price_change = ((latest_data['prices'][idx] - target_data['prices'][idx]) / 
-                                                target_data['prices'][idx] * 100)
+                                    if target_data['prices'][idx] and target_data['prices'][idx] != 0:
+                                        price_change = ((latest_data['prices'][idx] - target_data['prices'][idx]) /
+                                                    target_data['prices'][idx] * 100)
+                                    else:
+                                        price_change = 0
                                     
                                     rank_change = (int(latest_data['ranks'][idx] - target_data['ranks'][idx])
                                                 if not np.isnan(latest_data['ranks'][idx]) and 
@@ -558,23 +785,66 @@ class CryptoDataManager:
                                             {"$set": {
                                                 f'stats.change.performance_{period_name}': round(float(price_change), 2),
                                                 f'stats.change.rank_{period_name}': rank_change,
+                                                "stats.rank": current_rank,
                                                 "updated_at": now,
                                                 "last_metric_update": now
                                             }},
                                             upsert=True
                                         )
                                     )
+                                    processed_count += 1
+                                    
+                            logging.info(f"Processed {processed_count} coins for period {period_name}")
+                            
                     benchmarks['change_calculation'] = calc_benchmark.duration
                     
                     # Database update phase
                     update_benchmark = Benchmark("Database Updates")
                     with update_benchmark:
                         write_batch_size = 1000
+                        total_write_batches = (len(bulk_operations) + write_batch_size - 1) // write_batch_size
+                        
                         for i in range(0, len(bulk_operations), write_batch_size):
+                            current_write_batch = (i // write_batch_size) + 1
                             batch = bulk_operations[i:i + write_batch_size]
-                            result = self.db.coins.bulk_write(batch, ordered=False)
-                            successful_updates += result.modified_count
+                            
+                            # Get sample coins from current write batch using filter
+                            sample_coins = []
+                            for op in batch[:5]:
+                                try:
+                                    filter_dict = op._doc["filter"]
+                                    if isinstance(filter_dict, dict) and "coin_id" in filter_dict:
+                                        sample_coins.append(filter_dict["coin_id"])
+                                except (AttributeError, KeyError, TypeError):
+                                    continue
+                            
+                            if sample_coins:
+                                logging.info(
+                                    f"Writing batch {current_write_batch}/{total_write_batches} "
+                                    f"(Sample coins: {', '.join(sample_coins)})"
+                                )
+                            
+                            try:
+                                result = self.db.coins.bulk_write(batch, ordered=False)
+                                successful_updates += result.modified_count
+                                
+                                logging.info(
+                                    f"Batch {current_write_batch} results - "
+                                    f"Modified: {result.modified_count}, "
+                                    f"Matched: {result.matched_count}"
+                                )
+                            except Exception as e:
+                                logging.error(f"Error in bulk write batch {current_write_batch}: {str(e)}")
+                                continue
+                            
                     benchmarks['database_updates'] = update_benchmark.duration
+                    
+                    # Log batch summary
+                    logging.info(
+                        f"\nCompleted Batch {batch_num}/{total_batches}"
+                        f"\nProcessed {len(current_coin_batch)} coins"
+                        f"\nGenerated {len(bulk_operations)} updates"
+                    )
                 
                 # Update metrics_updates collection
                 update_end_time = datetime.now()
@@ -590,11 +860,14 @@ class CryptoDataManager:
                     'updated_at': update_end_time
                 }
                 
-                self.db.metrics_updates.update_one(
-                    {'metric_type': 'timeseries_metrics'},
-                    {'$set': update_info},
-                    upsert=True
-                )
+                try:
+                    self.db.metrics_updates.update_one(
+                        {'metric_type': 'timeseries_metrics'},
+                        {'$set': update_info},
+                        upsert=True
+                    )
+                except Exception as e:
+                    logging.error(f"Error updating metrics_updates collection: {str(e)}")
                 
                 # Log performance summary
                 logging.info("\nPerformance Summary:")
@@ -614,18 +887,36 @@ class CryptoDataManager:
 
         except Exception as e:
             # Update metrics_updates collection with error information
-            self.db.metrics_updates.update_one(
-                {'metric_type': 'timeseries_metrics'},
-                {'$set': {
-                    'update_status': 'failed',
-                    'last_error': str(e),
-                    'error_timestamp': datetime.now()
-                }},
-                upsert=True
-            )
+            try:
+                self.db.metrics_updates.update_one(
+                    {'metric_type': 'timeseries_metrics'},
+                    {'$set': {
+                        'update_status': 'failed',
+                        'last_error': str(e),
+                        'error_timestamp': datetime.now()
+                    }},
+                    upsert=True
+                )
+            except Exception as log_error:
+                logging.error(f"Error updating metrics_updates with failure: {str(log_error)}")
+                
             logging.error(f"Error calculating time series metrics: {str(e)}")
             raise
-        
+
+    def get_last_metrics_update(self):
+        """Get information about the last metrics update"""
+        update_info = self.db.metrics_updates.find_one({'metric_type': 'timeseries_metrics'})
+        if update_info:
+            return {
+                'last_update_start': update_info.get('last_update_start'),
+                'last_update_end': update_info.get('last_update_end'),
+                'duration_seconds': update_info.get('duration_seconds'),
+                'total_coins_processed': update_info.get('total_coins_processed'),
+                'successful_updates': update_info.get('successful_updates'),
+                'update_status': update_info.get('update_status')
+            }
+        return None
+
     def calculate_performance_metrics(self):
         """
         Calculate performance metrics for all cryptocurrencies and update their stats:
