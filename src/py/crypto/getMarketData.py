@@ -4,6 +4,7 @@ import os
 import time
 import pickle
 import psutil
+import argparse
 from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 import logging
@@ -991,6 +992,28 @@ class CryptoDataManager:
         df = df[df['MarketCap'] != 0]
         return df
 
+    def get_ranked_coins(self):
+        """Get coins sorted by rank where rank exists and market cap is non-zero"""
+        try:
+            ranked_coins = self.db.coins.find(
+                {
+                    "stats.rank": { "$exists": True },
+                    "stats.market_cap": { "$gt": 0 }
+                },
+                {
+                    "coin_id": 1,
+                    "name": 1,
+                    "symbol": 1,
+                    "stats.rank": 1,
+                    "stats.market_cap": 1
+                }
+            ).sort("stats.rank", 1)
+            
+            return list(ranked_coins)
+        except Exception as e:
+            logging.error(f"Error getting ranked coins: {str(e)}")
+            return []
+
 class CryptoDataCollector:
 
     def __init__(self):
@@ -1583,14 +1606,7 @@ class CryptoDataPipeline:
     ):
         """
         Copy a MongoDB collection from one database to another with a new name.
-        
-        Args:
-            source_uri (str): MongoDB connection URI for source database
-            dest_uri (str): MongoDB connection URI for destination database
-            source_db (str): Name of the source database
-            dest_db (str): Name of the destination database
-            source_collection (str): Name of the source collection
-            dest_collection (str): New name for the collection in destination database
+        Handles ObjectId duplication by generating new IDs.
         """
         try:
             # Connect to source database
@@ -1600,17 +1616,45 @@ class CryptoDataPipeline:
             # Connect to destination database
             dest_client = MongoClient(dest_uri)
             dest = dest_client[dest_db][dest_collection]
+
+            # Delete existing documents in destination collection
+            dest.delete_many({})
+            print(f"Deleted existing documents in {dest_db}.{dest_collection}")
             
             # Fetch all documents from source collection
             documents = source.find()
             
-            # If documents exist, insert them into destination collection
-            doc_list = list(documents)
-            if doc_list:
-                dest.insert_many(doc_list)
-                print(f"Successfully copied {len(doc_list)} documents from {source_db}.{source_collection} to {dest_db}.{dest_collection}")
-            else:
-                print("No documents found in source collection")
+            # Process documents in batches to handle large collections
+            batch_size = 100
+            doc_batch = []
+            total_copied = 0
+            
+            for doc in documents:
+                # Remove existing _id to let MongoDB generate a new one
+                if '_id' in doc:
+                    del doc['_id']
+                
+                doc_batch.append(doc)
+                
+                if len(doc_batch) >= batch_size:
+                    try:
+                        dest.insert_many(doc_batch)
+                        total_copied += len(doc_batch)
+                        print(f"Copied {total_copied} documents so far...")
+                        doc_batch = []
+                    except Exception as batch_error:
+                        print(f"Error inserting batch: {str(batch_error)}")
+                        continue
+            
+            # Insert any remaining documents
+            if doc_batch:
+                try:
+                    dest.insert_many(doc_batch)
+                    total_copied += len(doc_batch)
+                except Exception as batch_error:
+                    print(f"Error inserting final batch: {str(batch_error)}")
+            
+            print(f"Successfully copied {total_copied} documents from {source_db}.{source_collection} to {dest_db}.{dest_collection}")
                 
         except Exception as e:
             print(f"An error occurred: {str(e)}")
@@ -1619,6 +1663,11 @@ class CryptoDataPipeline:
             # Close connections
             source_client.close()
             dest_client.close()
+
+def updateMetrics():
+    pipeline = CryptoDataPipeline()
+    pipeline.update_performance_metrics()
+
 def main():
     # Install APScheduler if not already installed
     # pip install apscheduler
@@ -1636,9 +1685,7 @@ def main():
     pipeline.collect_daily_hist_data=False
     pipeline.start_scheduler=False
     
-    #pipeline.will_daily_update=True
-
-    pipeline.update_performance_metrics()
+    pipeline.will_daily_update=True
 
     #pipeline.db_manager.rename_field("coins", "current_stats", "stats")
 
@@ -1668,8 +1715,29 @@ def dbmigrate():
         SOURCE_COLLECTION,
         DEST_COLLECTION
     )
+    
+def periodicUpdate():
+    pipeline = CryptoDataPipeline()
+    pipeline.update_performance_metrics()
 
 if __name__ == "__main__":
-    main()
     # test()
-    #dbmigrate()
+    #
+    parser = argparse.ArgumentParser(description='Crypto Data Pipeline Operations')
+    parser.add_argument('--op', type=str, default='main',
+                      choices=['migrate', 'metric', 'periodic', 'all'],
+                      help='Operation to perform: main (daily update), migrate (database migration), or update (metrics update)')
+    args = parser.parse_args()
+    
+    if args.op == 'migrate':
+        dbmigrate()
+    elif args.op == 'metric': # recalculate performance and other metrics
+        updateMetrics()
+    elif args.op == 'periodic': # get price periodically
+        periodicUpdate()
+    elif args.op == 'all': # get price periodically
+        periodicUpdate()
+        updateMetrics()
+        dbmigrate()
+    else:
+        main()
